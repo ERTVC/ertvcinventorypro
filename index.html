@@ -1,0 +1,2433 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Inventory Pro</title>
+    <link rel="manifest" href="/manifest.json">
+    <link rel="apple-touch-icon" href="https://storage.googleapis.com/prompt-images/inventory-icon-192.png">
+    <meta name="theme-color" content="#0284c7">
+    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            colors: {
+              'primary': '#0284c7', // sky-600
+              'secondary': '#e2e8f0', // slate-200
+              'accent': '#facc15', // amber-400
+              'background': '#f1f5f9', // slate-100
+              'surface': '#ffffff', // white
+              'text-primary': '#1e293b', // slate-800
+              'text-secondary': '#64748b', // slate-500
+            },
+          },
+        },
+      }
+    </script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css" integrity="sha512-DTOQO9RWCH3ppGqcWaEA1BIZOC6xxalwEsw9c2QQeAIftl+Vegovlnee1c9QX4TctnWMn13TZye+giMm8e2LwA==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <!-- Add Babel Standalone for in-browser transpilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="importmap">
+{
+  "imports": {
+    "react": "https://esm.sh/react@18.3.1",
+    "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
+    "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
+    "recharts": "https://esm.sh/recharts@2.12.7",
+    "react/": "https://esm.sh/react@18.3.1/",
+    "react-dom/": "https://esm.sh/react-dom@18.3.1/",
+    "@google/genai": "https://esm.sh/@google/genai"
+  }
+}
+</script>
+    <!-- PDF Generation & Parsing Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+    <script>
+      pdfjsLib.GlobalWorkerOptions.workerSrc = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js`;
+    </script>
+    <!-- Excel Parsing Library -->
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+    <!-- Word Document Parsing Library -->
+    <script src="https://cdn.jsdelivr.net/npm/mammoth@1.6.0/mammoth.browser.min.js"></script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body class="bg-background">
+    <div id="root"></div>
+    <script>
+      if ('serviceWorker' in navigator) {
+        window.addEventListener('load', () => {
+          navigator.serviceWorker.register('/service-worker.js')
+            .then(registration => {
+              console.log('ServiceWorker registration successful with scope: ', registration.scope);
+            })
+            .catch(err => {
+              console.log('ServiceWorker registration failed: ', err);
+            });
+        });
+      }
+    </script>
+    <script type="text/babel" data-type="module">
+      import React, { useState, useMemo, useContext, createContext, useEffect, useCallback } from 'react';
+      import ReactDOM from 'react-dom/client';
+      import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
+      import { GoogleGenAI, Type } from "@google/genai";
+      
+      // --- Consolidated Application Code ---
+
+      // From types.ts
+      const UnitType = { PCS: 'pcs', KGS: 'kgs', ROLLS: 'rolls', PKTS: 'pkts' };
+      const RecipientType = {
+          TRAINEE: 'Trainee',
+          TRAINER: 'Trainer',
+          NON_TEACHING_STAFF: 'Non-teaching Staff',
+          HOD: 'HOD',
+          DP_ACADEMICS_OFFICE: 'DP Academics Office',
+          PRINCIPALS_OFFICE: 'Principals Office',
+          EXAMINATION_OFFICE: 'Examination Office',
+          ACCOUNTS_OFFICE: 'Accounts Office',
+          PROCUREMENT_OFFICE: 'Procurement Office',
+          DP_ADMINISTRATION_OFFICE: 'DP Administration Office',
+          KITCHEN: 'Kitchen',
+          IGA: 'Income Generating Activities',
+      };
+      const Page = {
+          DASHBOARD: 'Dashboard',
+          INVENTORY: 'Inventory',
+          ISSUE_LOG: 'Issue Log',
+          RECIPIENTS: 'Recipients',
+          SETTINGS: 'Settings',
+          BUDGETING: 'Budgeting',
+      };
+      
+      // --- START: UTILITIES & HOOKS ---
+      const useLocalStorage = (key, initialValue) => {
+        const [storedValue, setStoredValue] = useState(() => {
+          try {
+            const item = window.localStorage.getItem(key);
+            return item ? JSON.parse(item) : initialValue;
+          } catch (error) {
+            console.error(error);
+            return initialValue;
+          }
+        });
+        const setValue = (value) => {
+          try {
+            const valueToStore = value instanceof Function ? value(storedValue) : value;
+            setStoredValue(valueToStore);
+            window.localStorage.setItem(key, JSON.stringify(valueToStore));
+          } catch (error) {
+            console.error(error);
+          }
+        };
+        return [storedValue, setValue];
+      };
+      
+      const ToastContext = createContext(null);
+      const useToast = () => useContext(ToastContext);
+
+      const ToastProvider = ({ children }) => {
+        const [toasts, setToasts] = useState([]);
+        const addToast = (message, type = 'info') => {
+          const id = Date.now();
+          setToasts(prev => [...prev, { id, message, type }]);
+          setTimeout(() => {
+            removeToast(id);
+          }, 5000);
+        };
+        const removeToast = (id) => {
+          setToasts(prev => prev.filter(toast => toast.id !== id));
+        };
+        
+        const value = {
+          success: (msg) => addToast(msg, 'success'),
+          error: (msg) => addToast(msg, 'error'),
+          info: (msg) => addToast(msg, 'info'),
+        };
+
+        return (
+          <ToastContext.Provider value={value}>
+            {children}
+            <ToastContainer toasts={toasts} removeToast={removeToast} />
+          </ToastContext.Provider>
+        );
+      };
+
+      const ToastContainer = ({ toasts, removeToast }) => (
+        <div className="fixed top-5 right-5 z-[100] w-80">
+          {toasts.map(toast => (
+            <Toast key={toast.id} {...toast} onClose={() => removeToast(toast.id)} />
+          ))}
+        </div>
+      );
+      
+      const Toast = ({ message, type, onClose }) => {
+        const icons = {
+          success: 'fa-check-circle',
+          error: 'fa-times-circle',
+          info: 'fa-info-circle',
+        };
+        const colors = {
+          success: 'bg-green-500',
+          error: 'bg-red-500',
+          info: 'bg-blue-500',
+        };
+
+        return (
+          <div className={`flex items-center text-white p-3 rounded-lg shadow-lg mb-2 ${colors[type]}`}>
+            <i className={`fas ${icons[type]} mr-3 text-xl`}></i>
+            <p className="flex-1 text-sm font-medium">{message}</p>
+            <button onClick={onClose} className="ml-2 text-xl leading-none">&times;</button>
+          </div>
+        );
+      };
+      // --- END: UTILITIES & HOOKS ---
+
+      // --- START: OFFLINE & SYNC COMPONENTS ---
+      const OnlineStatusIndicator = ({ isOnline, isSyncing, syncQueueLength }) => {
+          let statusText = isOnline ? 'Online' : 'Offline';
+          let bgColor = isOnline ? 'bg-green-500' : 'bg-slate-500';
+          let title = isOnline ? 'Application is online.' : 'Application is offline. Changes are saved locally.';
+      
+          if (isSyncing) {
+              statusText = `Syncing ${syncQueueLength}...`;
+              bgColor = 'bg-yellow-500';
+              title = `Syncing ${syncQueueLength} offline changes.`;
+          }
+      
+          return (
+              <div className="fixed bottom-4 right-4 z-[200]" title={title}>
+                  <div className={`flex items-center text-white text-xs font-bold px-3 py-1.5 rounded-full shadow-lg ${bgColor} transition-colors`}>
+                      {isSyncing ? (
+                          <i className="fas fa-sync fa-spin mr-2"></i>
+                      ) : (
+                          <span className={`w-2.5 h-2.5 rounded-full mr-2 ${isOnline ? 'bg-green-200' : 'bg-slate-300'}`}></span>
+                      )}
+                      {statusText}
+                  </div>
+              </div>
+          );
+      };
+      // --- END: OFFLINE & SYNC COMPONENTS ---
+
+
+      // From components/common/Modal.tsx
+      const Modal = ({ isOpen, onClose, title, children, maxWidth = "max-w-md" }) => {
+        if (!isOpen) return null;
+
+        return (
+          <div className="fixed inset-0 bg-black bg-opacity-70 z-50 flex justify-center items-center p-4" onClick={onClose}>
+            <div
+              className={`bg-surface rounded-lg shadow-xl w-full ${maxWidth} m-4 p-6 transform transition-all max-h-[90vh] flex flex-col`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="flex justify-between items-center mb-4 flex-shrink-0">
+                <h3 className="text-xl font-bold text-text-primary">{title}</h3>
+                <button onClick={onClose} className="text-gray-400 hover:text-gray-800">
+                  <i className="fas fa-times text-2xl"></i>
+                </button>
+              </div>
+              <div className="overflow-y-auto">{children}</div>
+            </div>
+          </div>
+        );
+      };
+
+      const createPdfDoc = (orientation = 'portrait') => {
+        const { jsPDF } = window.jspdf;
+        const doc = new jsPDF({ orientation });
+
+        const COAT_OF_ARMS_BASE64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+        const ERTVC_LOGO_BASE64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+        
+        doc.addImage(COAT_OF_ARMS_BASE64, 'PNG', 15, 12, 25, 25);
+        doc.addImage(ERTVC_LOGO_BASE64, 'PNG', doc.internal.pageSize.getWidth() - 40, 12, 25, 25);
+        
+        const centerX = doc.internal.pageSize.getWidth() / 2;
+        
+        doc.setFontSize(14);
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor('#1e293b');
+        doc.text('ELDAMA RAVINE TECHNICAL AND', centerX, 18, { align: 'center' });
+        doc.text('VOCATIONAL COLLEGE', centerX, 25, { align: 'center' });
+
+        doc.setFontSize(9);
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor('#1e293b');
+        doc.text('P.O. BOX 560-20103 – ELDAMA RAVINE', centerX, 34, { align: 'center' });
+        doc.text('(MAJI MAZURI – MAKUTANO ROAD)', centerX, 39, { align: 'center' });
+        doc.text('Phone: 0729226734', centerX, 44, { align: 'center' });
+
+        const emailX = centerX - 20;
+        const websiteX = centerX + 20;
+        
+        doc.setFont('helvetica', 'bold');
+        doc.text('EMAIL:', emailX, 50, { align: 'right' });
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor('#0000ff');
+        doc.textWithLink('principal@ertvc.ac.ke', emailX + 2, 50, { url: 'mailto:principal@ertvc.ac.ke' });
+
+        doc.setFont('helvetica', 'bold');
+        doc.setTextColor('#1e293b');
+        doc.text('WEBSITE:', websiteX, 50, { align: 'right' });
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor('#0000ff');
+        doc.textWithLink('http://www.ertvc.ac.ke', websiteX + 2, 50, { url: 'http://www.ertvc.ac.ke' });
+        
+        doc.setDrawColor(0);
+        doc.setLineWidth(0.5);
+        doc.line(10, 56, doc.internal.pageSize.getWidth() - 10, 56);
+
+        return doc;
+      };
+
+      const exportToPdf = (title, headers, data, filename) => {
+        try {
+            const doc = createPdfDoc('portrait');
+            
+            const tableStartY = 70;
+
+            doc.setFontSize(14);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor('#1e293b');
+            doc.text(title, doc.internal.pageSize.getWidth() / 2, tableStartY - 5, { align: 'center' });
+            
+            doc.setFontSize(9);
+            doc.setFont('helvetica', 'normal');
+            doc.setTextColor('#64748b');
+            doc.text(`Generated on: ${new Date().toLocaleDateString()}`, 14, tableStartY + 2);
+
+            doc.autoTable({
+                startY: tableStartY + 7,
+                head: headers,
+                body: data,
+                theme: 'grid',
+                headStyles: {
+                    fillColor: [2, 132, 199], // primary color (sky-600)
+                    textColor: 255,
+                    fontStyle: 'bold',
+                },
+                styles: {
+                    fontSize: 8,
+                    cellPadding: 2.5,
+                },
+                alternateRowStyles: {
+                    fillColor: [241, 245, 249] // background color (slate-100)
+                }
+            });
+
+            doc.save(filename);
+        } catch(err) {
+            console.error("PDF Generation failed", err);
+            alert("An error occurred while generating the PDF. The file may be corrupt or a library is missing.");
+        }
+      };
+
+      const exportBudgetToPdf = (department, financialYear, items, grandTotal, quarter = null) => {
+        try {
+            const doc = createPdfDoc('landscape');
+            const tableStartY = 70;
+            let title, head, body, filename;
+
+            if (quarter) {
+                const quarterMap = {
+                    'q1': { name: 'Q1 (Jul-Sep)', key: 'q1_qty' },
+                    'q2': { name: 'Q2 (Oct-Dec)', key: 'q2_qty' },
+                    'q3': { name: 'Q3 (Jan-Mar)', key: 'q3_qty' },
+                    'q4': { name: 'Q4 (Apr-Jun)', key: 'q4_qty' },
+                };
+                const quarterInfo = quarterMap[quarter];
+                if (!quarterInfo) return;
+
+                title = `BUDGET FOR ${department.toUpperCase()} - ${quarterInfo.name} - F/Y ${financialYear}`;
+                filename = `budget_${quarter}_${department.replace(/\s+/g, '_')}_${financialYear.replace('/', '-')}.pdf`;
+                head = [['S/No', 'Description', 'Unit', 'Unit Price', 'Quantity', 'Total']];
+                
+                const filteredItems = items.filter(item => item[quarterInfo.key] > 0);
+                let quarterTotal = 0;
+
+                body = filteredItems.map((item, index) => {
+                    const qty = item[quarterInfo.key];
+                    const total = qty * item.unitPrice;
+                    quarterTotal += total;
+                    return [
+                        index + 1,
+                        item.description,
+                        item.unitOfIssue,
+                        item.unitPrice.toFixed(2),
+                        qty,
+                        total.toFixed(2)
+                    ];
+                });
+
+                const footer = [
+                    { content: 'Quarter Total', colSpan: 5, styles: { halign: 'right', fontStyle: 'bold' } },
+                    { content: `Ksh. ${quarterTotal.toFixed(2)}`, styles: { fontStyle: 'bold' } },
+                ];
+                body.push(footer);
+
+                doc.autoTable({
+                    startY: tableStartY,
+                    head: head,
+                    body: body,
+                    theme: 'grid',
+                    headStyles: { fillColor: [2, 132, 199], textColor: 255, fontStyle: 'bold', fontSize: 8 },
+                    styles: { fontSize: 8, cellPadding: 2, valign: 'middle' },
+                    alternateRowStyles: { fillColor: [241, 245, 249] },
+                    columnStyles: { 0: { cellWidth: 15 }, 1: { cellWidth: 'auto' } }
+                });
+
+            } else {
+                // Full year report
+                title = `BUDGET FOR ${department.toUpperCase()} - F/Y ${financialYear}`;
+                filename = `budget_${department.replace(/\s+/g, '_')}_${financialYear.replace('/', '-')}.pdf`;
+                head = [['S/No', 'Description', 'Unit', 'Unit Price', 'Q1 Qty', 'Q1 Total', 'Q2 Qty', 'Q2 Total', 'Q3 Qty', 'Q3 Total', 'Q4 Qty', 'Q4 Total', 'Total F/Y']];
+                body = items.map((item, index) => {
+                    const q1Total = item.q1_qty * item.unitPrice;
+                    const q2Total = item.q2_qty * item.unitPrice;
+                    const q3Total = item.q3_qty * item.unitPrice;
+                    const q4Total = item.q4_qty * item.unitPrice;
+                    const yearlyTotal = q1Total + q2Total + q3Total + q4Total;
+                    return [
+                        index + 1,
+                        item.description,
+                        item.unitOfIssue,
+                        item.unitPrice.toFixed(2),
+                        item.q1_qty, q1Total.toFixed(2),
+                        item.q2_qty, q2Total.toFixed(2),
+                        item.q3_qty, q3Total.toFixed(2),
+                        item.q4_qty, q4Total.toFixed(2),
+                        yearlyTotal.toFixed(2),
+                    ];
+                });
+
+                const footer = [
+                    { content: 'Grand Total', colSpan: 12, styles: { halign: 'right', fontStyle: 'bold' } },
+                    { content: `Ksh. ${grandTotal.toFixed(2)}`, styles: { fontStyle: 'bold' } },
+                ];
+                body.push(footer);
+
+                doc.autoTable({
+                    startY: tableStartY,
+                    head: head,
+                    body: body,
+                    theme: 'grid',
+                    headStyles: { fillColor: [2, 132, 199], textColor: 255, fontStyle: 'bold', fontSize: 7 },
+                    styles: { fontSize: 7, cellPadding: 1.5, valign: 'middle' },
+                    alternateRowStyles: { fillColor: [241, 245, 249] },
+                    columnStyles: { 0: { cellWidth: 10 }, 1: { cellWidth: 55 }, 2: { cellWidth: 15 } }
+                });
+            }
+            
+            doc.setFontSize(14);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor('#1e293b');
+            doc.text(title, doc.internal.pageSize.getWidth() / 2, tableStartY - 5, { align: 'center' });
+
+            doc.save(filename);
+        } catch(err) {
+            console.error("Budget PDF Generation failed", err);
+            alert("An error occurred while generating the Budget PDF.");
+        }
+      };
+      
+      const ReportCard = ({ title, description, iconClass, onPdfClick }) => {
+        const pdfButtonClass = "w-full text-center font-bold py-2 px-3 rounded-lg flex items-center justify-center transition-colors text-sm shadow-sm bg-primary hover:bg-sky-500 text-white";
+        
+        return (
+            <div className="bg-slate-50 border border-slate-200 p-4 rounded-lg flex flex-col gap-2 justify-between">
+                <div>
+                    <div className="flex items-center gap-3 mb-2">
+                        <i className={`${iconClass} text-2xl text-primary w-8 text-center`}></i>
+                        <h4 className="font-semibold text-text-primary">{title}</h4>
+                    </div>
+                    <p className="text-xs text-text-secondary">{description}</p>
+                </div>
+                <div className="flex gap-2 mt-3">
+                    <button onClick={onPdfClick} className={pdfButtonClass}>
+                        <i className="fas fa-file-pdf mr-2"></i> Download PDF
+                    </button>
+                </div>
+            </div>
+        );
+      };
+
+      const Reports = ({ items }) => {
+        const toast = useToast();
+
+        const downloadReport = (type) => {
+            let reportTitle, headers, data, filename, emptyMessage;
+            
+            switch(type) {
+                case 'asset':
+                    reportTitle = 'Asset Report';
+                    headers = [['Name', 'Category', 'Department', 'Quantity', 'Unit', 'Date Added']];
+                    data = items.filter(item => item.isAsset).map(item => [item.name, item.category, item.department, item.quantity, item.unit, item.dateAdded]);
+                    filename = 'asset_report.pdf';
+                    emptyMessage = "No asset data to export.";
+                    break;
+                case 'kitchen':
+                    reportTitle = 'Kitchen Inventory Report';
+                    headers = [['Name', 'Category', 'Type', 'Quantity', 'Unit', 'Date Added']];
+                    data = items.filter(item => item.department.toLowerCase() === 'kitchen').map(item => [item.name, item.category, item.isAsset ? 'Asset' : 'Consumable', item.quantity, item.unit, item.dateAdded]);
+                    filename = 'kitchen_inventory_report.pdf';
+                    emptyMessage = "No kitchen data to export.";
+                    break;
+                case 'iga':
+                    reportTitle = 'IGA Inventory Report';
+                    headers = [['Name', 'Category', 'Department', 'Type', 'Quantity', 'Unit', 'Date Added']];
+                    data = items.filter(item => item.isForIGA).map(item => [item.name, item.category, item.department, item.isAsset ? 'Asset' : 'Consumable', item.quantity, item.unit, item.dateAdded]);
+                    filename = 'iga_inventory_report.pdf';
+                    emptyMessage = "No IGA data to export.";
+                    break;
+                case 'stock':
+                    reportTitle = 'Full Stock Report';
+                    headers = [['Name', 'Category', 'Department', 'Type', 'Quantity', 'Unit', 'Date Added']];
+                    data = items.map(item => [item.name, item.category, item.department, item.isAsset ? 'Asset' : 'Consumable', item.quantity, item.unit, item.dateAdded]);
+                    filename = 'full_stock_report.pdf';
+                    emptyMessage = "No stock data to export.";
+                    break;
+                default:
+                    return;
+            }
+
+            if(data.length === 0) {
+              toast.info(emptyMessage);
+              return;
+            }
+            exportToPdf(reportTitle, headers, data, filename);
+        };
+
+        return (
+          <div className="bg-surface p-6 rounded-lg shadow-md">
+            <h3 className="text-xl font-semibold text-text-primary mb-4">Download Reports</h3>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+              <ReportCard 
+                  title="Asset Report"
+                  description="A list of all returnable assets in the inventory."
+                  iconClass="fas fa-shield-halved"
+                  onPdfClick={() => downloadReport('asset')}
+              />
+              <ReportCard 
+                  title="Kitchen Report"
+                  description="All consumable items and assets for the Kitchen."
+                  iconClass="fas fa-utensils"
+                  onPdfClick={() => downloadReport('kitchen')}
+              />
+              <ReportCard 
+                  title="IGA Report"
+                  description="All items and assets for Income Generating Activities."
+                  iconClass="fas fa-chart-line"
+                  onPdfClick={() => downloadReport('iga')}
+              />
+              <ReportCard 
+                  title="Full Stock Report"
+                  description="A complete dump of all items currently in stock."
+                  iconClass="fas fa-boxes-stacked"
+                  onPdfClick={() => downloadReport('stock')}
+              />
+            </div>
+          </div>
+        );
+      };
+      // --- END: Reports Component ---
+
+      // From components/Dashboard.tsx
+      const StatCard = ({ title, value, iconClass }) => (
+        <div className="bg-surface p-6 rounded-lg shadow-md flex items-center">
+          <div className="bg-primary p-4 rounded-full mr-4">
+            <i className={`${iconClass} text-white text-2xl`}></i>
+          </div>
+          <div>
+            <h3 className="text-sm font-medium text-text-secondary">{title}</h3>
+            <p className="text-2xl font-bold text-text-primary">{value}</p>
+          </div>
+        </div>
+      );
+
+      const COLORS = ['#0284c7', '#facc15', '#10b981', '#a855f7', '#f43f5e', '#64748b'];
+      const Dashboard = ({ stats, items, issueRecords, onGenerateAnalysis, analysis, isLoadingAnalysis }) => {
+        const categoryData = React.useMemo(() => {
+          const categoryCounts = items.reduce((acc, item) => {
+            acc[item.category] = (acc[item.category] || 0) + item.quantity;
+            return acc;
+          }, {} );
+          return Object.entries(categoryCounts).map(([name, value]) => ({ name, value }));
+        }, [items]);
+
+        return (
+          <div>
+            <h2 className="text-3xl font-bold text-text-primary mb-6">Dashboard</h2>
+            
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+              <StatCard title="Total Items in Stock" value={stats.totalItems} iconClass="fas fa-boxes-stacked" />
+              <StatCard title="Total Items Issued" value={stats.totalIssued} iconClass="fas fa-arrow-right-from-bracket" />
+              <StatCard title="Low Stock Items" value={stats.lowStockItems} iconClass="fas fa-exclamation-triangle" />
+              <StatCard title="Item Categories" value={stats.categories} iconClass="fas fa-tags" />
+            </div>
+            
+            <div className="bg-surface p-6 rounded-lg shadow-md mb-8">
+              <div className="flex justify-between items-start mb-4">
+                  <div>
+                      <h3 className="text-xl font-semibold text-text-primary">AI Inventory Insights</h3>
+                      <p className="text-sm text-text-secondary">Let Gemini analyze your stock and provide a summary.</p>
+                  </div>
+                  <button
+                      onClick={onGenerateAnalysis}
+                      disabled={isLoadingAnalysis}
+                      className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg flex items-center transition-colors disabled:bg-slate-400 disabled:cursor-wait"
+                  >
+                      {isLoadingAnalysis ? (
+                          <><i className="fas fa-spinner fa-spin mr-2"></i> Analyzing...</>
+                      ) : (
+                          <><i className="fas fa-wand-magic-sparkles mr-2"></i> Generate Analysis</>
+                      )}
+                  </button>
+              </div>
+              {analysis && (
+                  <div className="p-4 bg-sky-50 border border-sky-200 rounded-lg text-sm text-sky-900 whitespace-pre-wrap font-mono prose prose-sm max-w-none">
+                      {analysis}
+                  </div>
+              )}
+            </div>
+
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+              <div className="bg-surface p-6 rounded-lg shadow-md">
+                <h3 className="text-xl font-semibold text-text-primary mb-4">Stock Levels by Item</h3>
+                <ResponsiveContainer width="100%" height={300}>
+                  <BarChart data={items} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
+                    <XAxis dataKey="name" stroke="#64748b" tick={{ fontSize: 12 }} />
+                    <YAxis stroke="#64748b" />
+                    <Tooltip
+                      contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0' }}
+                      labelStyle={{ color: '#1e293b' }}
+                    />
+                    <Legend />
+                    <Bar dataKey="quantity" fill="#0284c7" name="Quantity in Stock" />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+              <div className="bg-surface p-6 rounded-lg shadow-md">
+                 <h3 className="text-xl font-semibold text-text-primary mb-4">Stock by Category</h3>
+                 <ResponsiveContainer width="100%" height={300}>
+                  <PieChart>
+                    <Pie
+                      data={categoryData}
+                      cx="50%"
+                      cy="50%"
+                      labelLine={false}
+                      outerRadius={110}
+                      fill="#8884d8"
+                      dataKey="value"
+                      nameKey="name"
+                      label={({ name, percent }) => `${name} ${(percent * 100).toFixed(0)}%`}
+                    >
+                      {categoryData.map((entry, index) => (
+                        <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                      ))}
+                    </Pie>
+                     <Tooltip
+                      contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0' }}
+                      labelStyle={{ color: '#1e293b' }}
+                    />
+                    <Legend />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            <Reports items={items} />
+
+          </div>
+        );
+      };
+
+      // From components/Inventory.tsx
+      const Inventory = ({ items, recipients, onAddItem, onIssueItem, onAddMultipleItems }) => {
+        const [isAddModalOpen, setAddModalOpen] = useState(false);
+        const [isIssueModalOpen, setIssueModalOpen] = useState(false);
+        const [isUploadModalOpen, setUploadModalOpen] = useState(false);
+        
+        const [itemToIssue, setItemToIssue] = useState(null);
+        const [newItem, setNewItem] = useState({ name: '', quantity: 0, category: '', department: '', unit: UnitType.PCS, isAsset: false, isForIGA: false });
+        
+        const [issueQuantity, setIssueQuantity] = useState(1);
+        const [selectedRecipient, setSelectedRecipient] = useState(null);
+        const [recipientSearch, setRecipientSearch] = useState('');
+        const [returnDate, setReturnDate] = useState('');
+        
+        // State for upload modal
+        const [uploadFile, setUploadFile] = useState(null);
+        const [uploadDepartment, setUploadDepartment] = useState('');
+        const [fileTextContent, setFileTextContent] = useState('');
+        const [isProcessing, setIsProcessing] = useState(false);
+        const [extractedItems, setExtractedItems] = useState([]);
+
+        const toast = useToast();
+
+        const departments = useMemo(() => [...new Set(items.map(i => i.department))].sort(), [items]);
+
+        useEffect(() => {
+          if (departments.length > 0 && !uploadDepartment) {
+            setUploadDepartment(departments[0]);
+          }
+        }, [departments, uploadDepartment]);
+
+        const filteredRecipients = useMemo(() => {
+          if (recipientSearch.length < 2) return [];
+          const searchTerm = recipientSearch.toLowerCase();
+          return recipients.filter(r => 
+            r.name.toLowerCase().includes(searchTerm) || 
+            r.identifier.toLowerCase().includes(searchTerm)
+          );
+        }, [recipientSearch, recipients]);
+        
+        const resetUploadModal = () => {
+            setUploadFile(null);
+            setFileTextContent('');
+            setIsProcessing(false);
+            setExtractedItems([]);
+            const fileInput = document.getElementById('itemUploadFile');
+            if (fileInput) fileInput.value = '';
+        };
+
+        const handleAddItemSubmit = (e) => {
+          e.preventDefault();
+          if (newItem.name && newItem.quantity > 0 && newItem.category && newItem.department) {
+            onAddItem(newItem);
+            toast.success(`'${newItem.name}' added to inventory.`);
+            setNewItem({ name: '', quantity: 0, category: '', department: '', unit: UnitType.PCS, isAsset: false, isForIGA: false });
+            setAddModalOpen(false);
+          } else {
+            toast.error("Please fill all fields correctly.");
+          }
+        };
+
+        const handleIssueItemClick = (item) => {
+          setItemToIssue(item);
+          setIssueQuantity(1);
+          setSelectedRecipient(null);
+          setRecipientSearch('');
+          setReturnDate('');
+          setIssueModalOpen(true);
+        };
+
+        const handleRecipientSelect = (recipient) => {
+          setSelectedRecipient(recipient);
+          setRecipientSearch(recipient.name);
+        };
+        
+        const handleIssueItemSubmit = (e) => {
+          e.preventDefault();
+          if (itemToIssue && selectedRecipient && issueQuantity > 0) {
+            if (itemToIssue.isAsset && !returnDate) {
+              toast.error('Please provide an expected return date for this asset.');
+              return;
+            }
+
+            const issueDetails = {
+              itemId: itemToIssue.id,
+              quantityIssued: issueQuantity,
+              recipientName: `${selectedRecipient.name} (${selectedRecipient.identifier})`,
+              recipientType: selectedRecipient.type,
+            };
+
+            if (itemToIssue.isAsset) {
+              issueDetails.returnDate = returnDate;
+            }
+
+            const success = onIssueItem(issueDetails);
+
+            if(success) {
+              toast.success(`${issueQuantity} ${itemToIssue.unit} of '${itemToIssue.name}' issued to ${selectedRecipient.name}.`);
+              setIssueModalOpen(false);
+              setItemToIssue(null);
+            }
+          } else {
+              toast.error("Please select a recipient and enter a valid quantity.");
+          }
+        };
+        
+        const handleFileChange = async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            setUploadFile(file);
+            setFileTextContent('');
+
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                let textContent = '';
+
+                if (file.name.endsWith('.docx')) {
+                    const result = await window.mammoth.extractRawText({ arrayBuffer });
+                    textContent = result.value;
+                } else if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+                    const data = new Uint8Array(arrayBuffer);
+                    const workbook = window.XLSX.read(data, { type: 'array' });
+                    workbook.SheetNames.forEach(sheetName => {
+                        const worksheet = workbook.Sheets[sheetName];
+                        textContent += window.XLSX.utils.sheet_to_csv(worksheet) + '\n';
+                    });
+                } else if (file.name.endsWith('.pdf')) {
+                    const pdf = await window.pdfjsLib.getDocument({data: arrayBuffer}).promise;
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                        const page = await pdf.getPage(i);
+                        const text = await page.getTextContent();
+                        textContent += text.items.map(s => s.str).join(' ') + '\n';
+                    }
+                } else {
+                    toast.error("Unsupported file type. Please upload .pdf, .docx, or .xlsx");
+                    setUploadFile(null);
+                    return;
+                }
+                setFileTextContent(textContent);
+                toast.success(`File "${file.name}" loaded and ready to process.`);
+            } catch (error) {
+                console.error("File reading error:", error);
+                toast.error("Failed to read the uploaded file.");
+                setUploadFile(null);
+            }
+        };
+
+        const handleProcessFile = async () => {
+            if (!fileTextContent || !uploadDepartment) {
+                toast.error("Please select a file and a department first.");
+                return;
+            }
+
+            setIsProcessing(true);
+            setExtractedItems([]);
+            const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : null;
+            if (!apiKey) {
+                toast.error("API Key not found.");
+                setIsProcessing(false);
+                return;
+            }
+
+            const responseSchema = {
+                type: Type.OBJECT,
+                properties: {
+                    items: {
+                        type: Type.ARRAY,
+                        description: "An array of extracted inventory items.",
+                        items: {
+                            type: Type.OBJECT,
+                            properties: {
+                                name: { type: Type.STRING, description: "The name of the item." },
+                                quantity: { type: Type.NUMBER, description: "The quantity of the item. Default to 1 if not specified." },
+                                category: { type: Type.STRING, description: "The category of the item (e.g., Stationery, Electronics, Consumables). Default to 'General'." },
+                                unit: { type: Type.STRING, description: "The unit of measurement (e.g., pcs, kgs, rolls, pkts). Default to 'pcs'." }
+                            },
+                            required: ["name", "quantity", "category", "unit"]
+                        }
+                    }
+                }
+            };
+            
+            try {
+                const ai = new GoogleGenAI({ apiKey });
+                const prompt = `You are an inventory assistant. The following text was extracted from a document containing a list of items for the "${uploadDepartment}" department. Your task is to extract each item's name, quantity, category, and unit of measurement. Adhere strictly to the JSON schema.
+
+                **Document Text:**
+                ${fileTextContent}`;
+
+                const response = await ai.models.generateContent({
+                    model: 'gemini-2.5-flash',
+                    contents: prompt,
+                    config: {
+                        responseMimeType: "application/json",
+                        responseSchema: responseSchema,
+                    },
+                });
+
+                const result = JSON.parse(response.text);
+                if (result.items && result.items.length > 0) {
+                    const formattedItems = result.items.map(item => ({
+                        id: `temp-${Math.random()}`,
+                        name: item.name,
+                        quantity: item.quantity || 1,
+                        category: item.category || 'General',
+                        unit: item.unit || 'pcs',
+                        department: uploadDepartment,
+                        isAsset: false, // Defaulting to consumable, can be changed later
+                        isForIGA: false,
+                    }));
+                    setExtractedItems(formattedItems);
+                    toast.success(`AI found ${formattedItems.length} items. Please review them below.`);
+                } else {
+                    toast.info("AI could not find any items in the document.");
+                }
+
+            } catch (err) {
+                console.error("Gemini API Error:", err);
+                toast.error("AI analysis failed. The document might be unreadable or the API key is invalid.");
+            } finally {
+                setIsProcessing(false);
+            }
+        };
+
+        const handleConfirmAddItems = () => {
+            if (extractedItems.length > 0) {
+                onAddMultipleItems(extractedItems);
+                setUploadModalOpen(false);
+                resetUploadModal();
+            }
+        };
+
+        const closeIssueModal = () => {
+          setIssueModalOpen(false);
+          setItemToIssue(null);
+        }
+
+        const closeUploadModal = () => {
+          setUploadModalOpen(false);
+          resetUploadModal();
+        }
+
+        return (
+          <div>
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-3xl font-bold text-text-primary">Inventory</h2>
+              <div className="flex gap-2">
+                 <button
+                    onClick={() => { setUploadModalOpen(true); }}
+                    className="bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg flex items-center transition-colors"
+                  >
+                    <i className="fas fa-upload mr-2"></i> Upload Item List
+                  </button>
+                  <button
+                    onClick={() => setAddModalOpen(true)}
+                    className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg flex items-center transition-colors"
+                  >
+                    <i className="fas fa-plus mr-2"></i> Add New Item
+                  </button>
+              </div>
+            </div>
+
+            <div className="bg-surface rounded-lg shadow-md overflow-x-auto">
+              <table className="min-w-full">
+                <thead className="bg-secondary">
+                  <tr>
+                    <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Item Name</th>
+                    <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Category</th>
+                    <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Department</th>
+                    <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Type</th>
+                    <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Quantity</th>
+                    <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Unit</th>
+                    <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Date Added</th>
+                    <th className="py-3 px-6 text-center text-xs font-medium text-text-secondary uppercase tracking-wider">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-secondary">
+                  {items.map((item) => (
+                    <tr key={item.id} className="hover:bg-slate-100 transition-colors">
+                      <td className="py-4 px-6 whitespace-nowrap text-text-primary">{item.name}</td>
+                      <td className="py-4 px-6 whitespace-nowrap text-text-secondary">{item.category}</td>
+                      <td className="py-4 px-6 whitespace-nowrap text-text-secondary">{item.department}</td>
+                       <td className="py-4 px-6 whitespace-nowrap text-text-secondary">
+                         <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${item.isAsset ? 'bg-cyan-100 text-cyan-800' : 'bg-indigo-100 text-indigo-800'}`}>
+                            {item.isAsset ? 'Asset' : 'Consumable'}
+                         </span>
+                       </td>
+                      <td className="py-4 px-6 whitespace-nowrap">
+                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                          item.quantity > 10 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                        }`}>
+                          {item.quantity}
+                        </span>
+                      </td>
+                      <td className="py-4 px-6 whitespace-nowrap text-text-secondary">{item.unit}</td>
+                      <td className="py-4 px-6 whitespace-nowrap text-text-secondary">{item.dateAdded}</td>
+                      <td className="py-4 px-6 text-center">
+                        <button 
+                          onClick={() => handleIssueItemClick(item)}
+                          className="bg-accent hover:bg-amber-300 text-gray-900 font-bold py-1 px-3 rounded-lg text-sm transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed"
+                          disabled={item.quantity === 0}
+                        >
+                          Issue
+                        </button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <Modal isOpen={isAddModalOpen} onClose={() => setAddModalOpen(false)} title="Add New Item">
+              <form onSubmit={handleAddItemSubmit}>
+                <div className="mb-4">
+                  <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="itemName">Item Name</label>
+                  <input type="text" id="itemName" value={newItem.name} onChange={(e) => setNewItem({ ...newItem, name: e.target.value })} className="w-full bg-slate-100 text-text-primary p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" required />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="category">Category</label>
+                  <input type="text" id="category" value={newItem.category} onChange={(e) => setNewItem({ ...newItem, category: e.target.value })} className="w-full bg-slate-100 text-text-primary p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" required />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="department">Department</label>
+                  <input type="text" id="department" value={newItem.department} onChange={(e) => setNewItem({ ...newItem, department: e.target.value })} className="w-full bg-slate-100 text-text-primary p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" required />
+                </div>
+                 <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="quantity">Quantity</label>
+                    <input type="number" id="quantity" value={newItem.quantity} onChange={(e) => setNewItem({ ...newItem, quantity: parseFloat(e.target.value) || 0 })} className="w-full bg-slate-100 text-text-primary p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" required min="0.01" step="0.01" />
+                  </div>
+                  <div>
+                    <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="unit">Unit</label>
+                    <select id="unit" value={newItem.unit} onChange={(e) => setNewItem({ ...newItem, unit: e.target.value })} className="w-full bg-slate-100 text-text-primary p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" required>
+                      {Object.values(UnitType).map(type => (
+                          <option key={type} value={type}>{type.toUpperCase()}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+                <div className="mb-4">
+                   <label className="flex items-center cursor-pointer">
+                      <input type="checkbox" checked={newItem.isAsset} onChange={(e) => setNewItem({ ...newItem, isAsset: e.target.checked })} className="form-checkbox h-5 w-5 text-primary rounded focus:ring-primary transition duration-150 ease-in-out" />
+                      <span className="ml-3 text-text-secondary font-bold">This is an asset</span>
+                  </label>
+                  <p className="text-xs text-text-secondary mt-1 ml-8">Check this if the item is a returnable asset (e.g., laptops, tools, furniture).</p>
+                </div>
+                <div className="mb-4">
+                   <label className="flex items-center cursor-pointer">
+                      <input type="checkbox" checked={newItem.isForIGA} onChange={(e) => setNewItem({ ...newItem, isForIGA: e.target.checked })} className="form-checkbox h-5 w-5 text-primary rounded focus:ring-primary transition duration-150 ease-in-out" />
+                      <span className="ml-3 text-text-secondary font-bold">For Income Generating Activity (IGA)</span>
+                  </label>
+                  <p className="text-xs text-text-secondary mt-1 ml-8">Check this if the item is specifically for an IGA project.</p>
+                </div>
+                <div className="flex justify-end">
+                  <button type="submit" className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg">Add Item</button>
+                </div>
+              </form>
+            </Modal>
+            
+            <Modal isOpen={isUploadModalOpen} onClose={closeUploadModal} title="Upload and Process Item List" maxWidth="max-w-4xl">
+                {extractedItems.length === 0 ? (
+                    <div>
+                        <div className="mb-6 p-4 bg-sky-50 border border-sky-200 rounded-lg text-sm text-sky-800">
+                            <p className="font-bold mb-2"><i className="fas fa-info-circle mr-2"></i>Instructions</p>
+                            <p>1. Select the department these items belong to.</p>
+                            <p>2. Upload a document (.pdf, .docx, .xlsx) containing the item list.</p>
+                            <p>3. Click "Process with AI" to let Gemini extract the items for your review.</p>
+                        </div>
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-start">
+                            <div>
+                                <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="uploadDepartment">Department</label>
+                                <select id="uploadDepartment" value={uploadDepartment} onChange={(e) => setUploadDepartment(e.target.value)} className="w-full bg-slate-100 text-text-primary p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" required>
+                                    {departments.map(dept => <option key={dept} value={dept}>{dept}</option>)}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="itemUploadFile">Upload Document</label>
+                                <input type="file" id="itemUploadFile" onChange={handleFileChange} className="w-full text-text-secondary text-sm file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-white hover:file:bg-sky-500 cursor-pointer" accept=".pdf, .docx, .xlsx, .xls" />
+                            </div>
+                        </div>
+                        <div className="mt-8 flex justify-end">
+                            <button onClick={handleProcessFile} disabled={isProcessing || !uploadFile || !uploadDepartment} className="bg-accent hover:bg-amber-300 text-gray-900 font-bold py-2.5 px-6 rounded-lg flex items-center justify-center transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed">
+                                {isProcessing ? (<><i className="fas fa-spinner fa-spin mr-2"></i> Processing...</>) : (<><i className="fas fa-wand-magic-sparkles mr-2"></i> Process with AI</>)}
+                            </button>
+                        </div>
+                    </div>
+                ) : (
+                    <div>
+                        <p className="text-sm text-text-secondary mb-4">AI has extracted the following items. Please review and confirm before adding them to the inventory.</p>
+                        <div className="overflow-x-auto rounded-lg border border-secondary max-h-96">
+                            <table className="min-w-full text-sm">
+                                <thead className="bg-secondary/60 sticky top-0">
+                                    <tr>
+                                        <th className="py-2 px-3 text-left text-xs font-medium text-text-secondary uppercase">Name</th>
+                                        <th className="py-2 px-3 text-left text-xs font-medium text-text-secondary uppercase">Qty</th>
+                                        <th className="py-2 px-3 text-left text-xs font-medium text-text-secondary uppercase">Unit</th>
+                                        <th className="py-2 px-3 text-left text-xs font-medium text-text-secondary uppercase">Category</th>
+                                        <th className="py-2 px-3 text-left text-xs font-medium text-text-secondary uppercase">Department</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {extractedItems.map(item => (
+                                        <tr key={item.id} className="border-t border-secondary">
+                                            <td className="p-2">{item.name}</td>
+                                            <td className="p-2">{item.quantity}</td>
+                                            <td className="p-2">{item.unit}</td>
+                                            <td className="p-2">{item.category}</td>
+                                            <td className="p-2">{item.department}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                         <div className="mt-6 flex justify-between items-center">
+                            <button onClick={resetUploadModal} className="text-text-secondary font-bold py-2 px-4 rounded-lg">
+                                <i className="fas fa-arrow-left mr-2"></i> Back
+                            </button>
+                            <button onClick={handleConfirmAddItems} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg">
+                                <i className="fas fa-check mr-2"></i> Confirm and Add Items
+                            </button>
+                        </div>
+                    </div>
+                )}
+            </Modal>
+
+            <Modal isOpen={isIssueModalOpen} onClose={closeIssueModal} title={`Issue Item: ${itemToIssue?.name}`}>
+              {itemToIssue && (
+                <form onSubmit={handleIssueItemSubmit}>
+                  <div className="mb-4">
+                      <p className="text-text-secondary">Available Quantity: <span className="font-bold text-text-primary">{itemToIssue.quantity} {itemToIssue.unit}</span></p>
+                  </div>
+                  <div className="mb-4">
+                      <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="issueQuantity">Quantity to Issue</label>
+                      <input type="number" id="issueQuantity" value={issueQuantity} onChange={(e) => setIssueQuantity(parseFloat(e.target.value))} className="w-full bg-slate-100 text-text-primary p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" required min="0.01" step="0.01" max={itemToIssue.quantity} />
+                  </div>
+
+                   { itemToIssue.isAsset && (
+                      <div className="mb-4">
+                          <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="returnDate">Expected Return Date</label>
+                          <input 
+                              type="date" 
+                              id="returnDate" 
+                              value={returnDate} 
+                              onChange={(e) => setReturnDate(e.target.value)} 
+                              className="w-full bg-slate-100 text-text-primary p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                              required
+                              min={new Date().toISOString().split('T')[0]}
+                          />
+                      </div>
+                  )}
+
+                  <div className="mb-4 relative">
+                      <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="recipientSearch">Recipient</label>
+                      <div className="flex items-center">
+                          <i className="fas fa-search absolute left-3 text-text-secondary"></i>
+                          <input 
+                              type="text" 
+                              id="recipientSearch"
+                              placeholder="Search by name or ID..."
+                              value={recipientSearch}
+                              onChange={(e) => {
+                                  setRecipientSearch(e.target.value);
+                                  if(selectedRecipient) setSelectedRecipient(null); // Clear selection if user types again
+                              }}
+                              className="w-full bg-slate-100 text-text-primary p-2 pl-10 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" 
+                              autoComplete="off"
+                              required 
+                          />
+                      </div>
+
+                      {filteredRecipients.length > 0 && recipientSearch.length > 0 && !selectedRecipient && (
+                          <ul className="absolute z-10 w-full bg-surface border border-slate-200 rounded-lg mt-1 max-h-48 overflow-y-auto shadow-lg">
+                              {filteredRecipients.map(r => (
+                                  <li 
+                                      key={r.id}
+                                      className="p-3 hover:bg-slate-100 cursor-pointer text-sm"
+                                      onClick={() => handleRecipientSelect(r)}
+                                  >
+                                      <p className="font-semibold text-text-primary">{r.name}</p>
+                                      <p className="text-xs text-text-secondary">{r.identifier} - {r.type}</p>
+                                  </li>
+                              ))}
+                          </ul>
+                      )}
+                  </div>
+                  
+                  <div className="flex justify-end mt-6">
+                      <button type="button" onClick={closeIssueModal} className="text-text-secondary font-bold py-2 px-4 rounded-lg mr-2">Cancel</button>
+                      <button type="submit" className="bg-accent hover:bg-amber-300 text-gray-900 font-bold py-2 px-4 rounded-lg disabled:bg-slate-300 disabled:cursor-not-allowed" disabled={!selectedRecipient}>Issue Item</button>
+                  </div>
+                </form>
+              )}
+            </Modal>
+          </div>
+        );
+      };
+
+      // From components/IssueLog.tsx
+      const getRecipientTypeColor = (type) => {
+          switch (type) {
+              case RecipientType.TRAINER: return 'bg-sky-100 text-sky-800';
+              case RecipientType.TRAINEE: return 'bg-fuchsia-100 text-fuchsia-800';
+              case RecipientType.NON_TEACHING_STAFF: return 'bg-amber-100 text-amber-800';
+              case RecipientType.HOD: return 'bg-indigo-100 text-indigo-800';
+              case RecipientType.DP_ACADEMICS_OFFICE: return 'bg-purple-100 text-purple-800';
+              case RecipientType.PRINCIPALS_OFFICE: return 'bg-pink-100 text-pink-800';
+              case RecipientType.EXAMINATION_OFFICE: return 'bg-rose-100 text-rose-800';
+              case RecipientType.ACCOUNTS_OFFICE: return 'bg-teal-100 text-teal-800';
+              case RecipientType.PROCUREMENT_OFFICE: return 'bg-emerald-100 text-emerald-800';
+              case RecipientType.DP_ADMINISTRATION_OFFICE: return 'bg-lime-100 text-lime-800';
+              case RecipientType.KITCHEN: return 'bg-orange-100 text-orange-800';
+              case RecipientType.IGA: return 'bg-yellow-100 text-yellow-800';
+              default: return 'bg-slate-200 text-slate-800';
+          }
+      }
+
+      const IssueLog = ({ records, onReturnAsset }) => {
+        const today = new Date();
+        today.setHours(23, 59, 59, 999); 
+
+        return (
+          <div>
+            <h2 className="text-3xl font-bold text-text-primary mb-6">Issue Log</h2>
+            <div className="bg-surface rounded-lg shadow-md overflow-x-auto">
+              <table className="min-w-full">
+                <thead className="bg-secondary">
+                  <tr>
+                    <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Item Name</th>
+                    <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Qty</th>
+                    <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Recipient Name</th>
+                    <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Date Issued</th>
+                    <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Return Status</th>
+                    <th className="py-3 px-6 text-center text-xs font-medium text-text-secondary uppercase tracking-wider">Actions</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-secondary">
+                  {records.map((record) => {
+                    const returnDate = record.returnDate ? new Date(record.returnDate) : null;
+                    const isOverdue = returnDate && returnDate < today && !record.isReturned;
+                    const isReturned = record.isReturned;
+                    
+                    return (
+                      <tr key={record.id} className={`hover:bg-slate-100 transition-colors ${isReturned ? 'opacity-60 bg-slate-50' : ''}`}>
+                        <td className="py-4 px-6 whitespace-nowrap text-text-primary font-medium">{record.itemName}</td>
+                        <td className="py-4 px-6 whitespace-nowrap text-text-secondary">{record.quantityIssued} {record.unit}</td>
+                        <td className="py-4 px-6 whitespace-nowrap">
+                            <div className="text-sm font-medium text-text-primary">{record.recipientName.split('(')[0].trim()}</div>
+                            <div className={`text-xs px-2 py-0.5 inline-flex font-semibold rounded-full ${getRecipientTypeColor(record.recipientType)}`}>
+                              {record.recipientType}
+                            </div>
+                        </td>
+                        <td className="py-4 px-6 whitespace-nowrap text-text-secondary">{record.dateIssued}</td>
+                        <td className="py-4 px-6 whitespace-nowrap text-text-secondary">
+                          {record.isAsset ? (
+                            isReturned ? (
+                                <span className="px-2 py-1 text-xs rounded-full font-semibold bg-green-200 text-green-800">
+                                    <i className="fas fa-check-circle mr-1"></i> Returned on {record.actualReturnDate}
+                                </span>
+                            ) : (
+                                <span 
+                                    className={`px-2 py-1 text-xs rounded-full font-semibold ${isOverdue ? 'bg-red-200 text-red-800 animate-pulse' : 'bg-slate-200 text-slate-700'}`}
+                                    title={isOverdue ? `Overdue! Expected back on ${record.returnDate}` : `Expected return on ${record.returnDate}`}
+                                >
+                                    {isOverdue && <i className="fas fa-exclamation-triangle mr-1"></i>}
+                                    Due: {record.returnDate}
+                                </span>
+                            )
+                          ) : (
+                              <span className="text-slate-400">N/A (Consumable)</span>
+                          )}
+                        </td>
+                        <td className="py-4 px-6 text-center">
+                            {record.isAsset && !isReturned && (
+                                <button
+                                    onClick={() => onReturnAsset(record.id)}
+                                    className="bg-sky-500 hover:bg-sky-600 text-white font-bold py-1 px-3 rounded-lg text-sm transition-colors"
+                                >
+                                    Return
+                                </button>
+                            )}
+                        </td>
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        );
+      };
+
+      // From components/RecipientsPage.tsx
+      const RecipientsPage = ({ recipients, onAddRecipient, onImportRecipients }) => {
+        const [isAddModalOpen, setAddModalOpen] = useState(false);
+        const [isImportModalOpen, setImportModalOpen] = useState(false);
+        const [searchTerm, setSearchTerm] = useState('');
+        const [newRecipient, setNewRecipient] = useState({ name: '', identifier: '', type: RecipientType.TRAINEE });
+        const toast = useToast();
+
+        // --- START: Import Modal State & Logic ---
+        const [importType, setImportType] = useState(RecipientType.TRAINEE);
+        const [importFile, setImportFile] = useState(null);
+        const [rawFileText, setRawFileText] = useState('');
+        const [isProcessingAI, setIsProcessingAI] = useState(false);
+        const [extractedRecipients, setExtractedRecipients] = useState([]);
+
+        const resetImportModal = () => {
+          setImportType(RecipientType.TRAINEE);
+          setImportFile(null);
+          setRawFileText('');
+          setIsProcessingAI(false);
+          setExtractedRecipients([]);
+          const fileInput = document.getElementById('recipientImportFile');
+          if (fileInput) fileInput.value = '';
+        };
+        
+        const closeImportModal = () => {
+          setImportModalOpen(false);
+          resetImportModal();
+        };
+
+        const handleAddSubmit = (e) => {
+          e.preventDefault();
+          if (newRecipient.name && newRecipient.identifier) {
+            onAddRecipient(newRecipient);
+            toast.success(`Recipient '${newRecipient.name}' added.`);
+            setNewRecipient({ name: '', identifier: '', type: RecipientType.TRAINEE });
+            setAddModalOpen(false);
+          } else {
+            toast.error("Please provide a name and identifier.");
+          }
+        };
+
+        const handleFileChange = async (event) => {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            setImportFile(file);
+            setRawFileText('');
+            const fileInput = event.target;
+
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                let textContent = '';
+
+                if (file.name.endsWith('.docx')) {
+                    const result = await window.mammoth.extractRawText({ arrayBuffer });
+                    textContent = result.value;
+                } else if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+                    const data = new Uint8Array(arrayBuffer);
+                    const workbook = window.XLSX.read(data, { type: 'array' });
+                    workbook.SheetNames.forEach(sheetName => {
+                        const worksheet = workbook.Sheets[sheetName];
+                        textContent += window.XLSX.utils.sheet_to_csv(worksheet) + '\n';
+                    });
+                } else if (file.name.endsWith('.pdf')) {
+                    const pdf = await window.pdfjsLib.getDocument({data: arrayBuffer}).promise;
+                    for (let i = 1; i <= pdf.numPages; i++) {
+                        const page = await pdf.getPage(i);
+                        const text = await page.getTextContent();
+                        textContent += text.items.map(s => s.str).join(' ') + '\n';
+                    }
+                } else {
+                    toast.error("Unsupported file type. Please upload .pdf, .docx, or .xlsx");
+                    setImportFile(null);
+                    if (fileInput) fileInput.value = '';
+                    return;
+                }
+                setRawFileText(textContent);
+                toast.success(`File "${file.name}" loaded and ready to process.`);
+            } catch (error) {
+                console.error("File reading error:", error);
+                toast.error("Failed to read the uploaded file.");
+                setImportFile(null);
+                if (fileInput) fileInput.value = '';
+            }
+        };
+
+        const handleProcessFileWithAI = async () => {
+          if (!rawFileText) {
+              toast.error("Please select a file first.");
+              return;
+          }
+          setIsProcessingAI(true);
+          setExtractedRecipients([]);
+
+          const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : null;
+          if (!apiKey) {
+              toast.error("API Key not found.");
+              setIsProcessingAI(false);
+              return;
+          }
+
+          const responseSchema = {
+            type: Type.OBJECT,
+            properties: {
+                recipients: {
+                    type: Type.ARRAY,
+                    description: "An array of extracted people from the document.",
+                    items: {
+                        type: Type.OBJECT,
+                        properties: {
+                            name: { type: Type.STRING, description: "The person's full name." },
+                            identifier: { type: Type.STRING, description: "The person's unique identifier (e.g., admission number, staff ID)." }
+                        },
+                        required: ["name", "identifier"]
+                    }
+                }
+            }
+          };
+
+          try {
+              const ai = new GoogleGenAI({ apiKey });
+              const prompt = `You are an assistant helping to populate a student or staff database from a document. The document lists individuals for the '${importType}' category. Your task is to extract each person's full name and their unique identifier (like an Admission Number or Staff ID). Adhere strictly to the JSON schema.
+
+              **Document Text:**
+              ${rawFileText}`;
+
+              const response = await ai.models.generateContent({
+                  model: 'gemini-2.5-flash',
+                  contents: prompt,
+                  config: {
+                      responseMimeType: "application/json",
+                      responseSchema: responseSchema,
+                  },
+              });
+
+              const result = JSON.parse(response.text);
+              if (result.recipients && result.recipients.length > 0) {
+                  const formattedRecipients = result.recipients.map(rec => ({
+                      name: rec.name,
+                      identifier: rec.identifier,
+                      type: importType, // Add the type selected by the user
+                  }));
+                  setExtractedRecipients(formattedRecipients);
+                  toast.success(`AI found ${formattedRecipients.length} recipients. Please review them below.`);
+              } else {
+                  toast.info("AI could not find any recipients in the document.");
+              }
+
+          } catch (err) {
+              console.error("Gemini API Error:", err);
+              toast.error("AI analysis failed. The document might be unreadable or the API key is invalid.");
+          } finally {
+              setIsProcessingAI(false);
+          }
+        };
+
+        const handleConfirmImport = () => {
+            if (extractedRecipients.length > 0) {
+                onImportRecipients(extractedRecipients);
+                closeImportModal();
+            }
+        };
+        // --- END: Import Modal State & Logic ---
+
+        const filteredRecipients = recipients.filter(r => 
+          r.name.toLowerCase().includes(searchTerm.toLowerCase()) || 
+          r.identifier.toLowerCase().includes(searchTerm.toLowerCase())
+        );
+
+        return (
+          <div>
+            <div className="flex justify-between items-center mb-6">
+              <h2 className="text-3xl font-bold text-text-primary">Recipients</h2>
+              <div className="flex gap-2">
+                  <button
+                  onClick={() => setImportModalOpen(true)}
+                  className="bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg flex items-center transition-colors"
+                  >
+                      <i className="fas fa-upload mr-2"></i> Import Recipients
+                  </button>
+                  <button
+                      onClick={() => setAddModalOpen(true)}
+                      className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg flex items-center transition-colors"
+                  >
+                      <i className="fas fa-plus mr-2"></i> Add New Recipient
+                  </button>
+              </div>
+            </div>
+            
+            <div className="mb-4">
+              <input 
+                  type="text"
+                  placeholder="Search by name or ID..."
+                  value={searchTerm}
+                  onChange={e => setSearchTerm(e.target.value)}
+                  className="w-full max-w-sm bg-surface p-2 rounded-lg border border-slate-300 focus:outline-none focus:ring-2 focus:ring-primary"
+              />
+            </div>
+
+            <div className="bg-surface rounded-lg shadow-md overflow-x-auto">
+              <table className="min-w-full">
+                <thead className="bg-secondary">
+                  <tr>
+                    <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Name</th>
+                    <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">ID / Admission No.</th>
+                    <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Type</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-secondary">
+                  {filteredRecipients.map((recipient) => (
+                    <tr key={recipient.id} className="hover:bg-slate-100 transition-colors">
+                      <td className="py-4 px-6 whitespace-nowrap text-text-primary font-medium">{recipient.name}</td>
+                      <td className="py-4 px-6 whitespace-nowrap text-text-secondary">{recipient.identifier}</td>
+                      <td className="py-4 px-6 whitespace-nowrap">
+                         <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getRecipientTypeColor(recipient.type)}`}>
+                          {recipient.type}
+                         </span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+               {filteredRecipients.length === 0 && (
+                  <div className="text-center py-10 text-text-secondary">
+                      <p>No recipients found.</p>
+                  </div>
+               )}
+            </div>
+
+            <Modal isOpen={isAddModalOpen} onClose={() => setAddModalOpen(false)} title="Add New Recipient">
+              <form onSubmit={handleAddSubmit}>
+                <div className="mb-4">
+                  <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="recipientName">Full Name</label>
+                  <input type="text" id="recipientName" value={newRecipient.name} onChange={(e) => setNewRecipient({ ...newRecipient, name: e.target.value })} className="w-full bg-slate-100 text-text-primary p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" required />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="recipientIdentifier">Identifier (ID/Admission No.)</label>
+                  <input type="text" id="recipientIdentifier" value={newRecipient.identifier} onChange={(e) => setNewRecipient({ ...newRecipient, identifier: e.target.value })} className="w-full bg-slate-100 text-text-primary p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" required />
+                </div>
+                <div className="mb-4">
+                  <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="recipientType">Type</label>
+                  <select id="recipientType" value={newRecipient.type} onChange={(e) => setNewRecipient({ ...newRecipient, type: e.target.value })} className="w-full bg-slate-100 text-text-primary p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" required>
+                      {[RecipientType.TRAINEE, RecipientType.TRAINER, RecipientType.NON_TEACHING_STAFF, RecipientType.IGA].map(type => (
+                          <option key={type} value={type}>{type}</option>
+                      ))}
+                  </select>
+                </div>
+                <div className="flex justify-end">
+                  <button type="submit" className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg">Add Recipient</button>
+                </div>
+              </form>
+            </Modal>
+            
+            <Modal isOpen={isImportModalOpen} onClose={closeImportModal} title="Import Recipients with AI" maxWidth="max-w-4xl">
+              {extractedRecipients.length === 0 ? (
+                  <div>
+                    <div className="mb-6 p-4 bg-sky-50 border border-sky-200 rounded-lg text-sm text-sky-800">
+                        <p className="font-bold mb-2"><i className="fas fa-info-circle mr-2"></i>Instructions</p>
+                        <p>1. Select the type of recipients you are importing (e.g., Trainee, Trainer).</p>
+                        <p>2. Upload a document (.pdf, .docx, .xlsx) containing a list of names and identifiers.</p>
+                        <p>3. Click "Process with AI" to let Gemini extract the recipients for your review. Duplicates based on identifier will be ignored on final import.</p>
+                    </div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-6 items-end">
+                      <div>
+                        <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="importRecipientType">Recipient Type for this Import</label>
+                        <select id="importRecipientType" value={importType} onChange={(e) => setImportType(e.target.value)} className="w-full bg-slate-100 text-text-primary p-2.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" required>
+                            {[RecipientType.TRAINEE, RecipientType.TRAINER, RecipientType.NON_TEACHING_STAFF, RecipientType.IGA].map(type => (
+                                <option key={type} value={type}>{type}</option>
+                            ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="recipientImportFile">Upload Document</label>
+                        <input type="file" id="recipientImportFile" onChange={handleFileChange} className="w-full text-text-secondary text-sm file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-white hover:file:bg-sky-500 cursor-pointer" accept=".pdf, .docx, .xlsx, .xls" />
+                      </div>
+                    </div>
+                    <div className="mt-8 flex justify-end">
+                        <button onClick={handleProcessFileWithAI} disabled={isProcessingAI || !importFile} className="bg-accent hover:bg-amber-300 text-gray-900 font-bold py-2.5 px-6 rounded-lg flex items-center justify-center transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed">
+                            {isProcessingAI ? (<><i className="fas fa-spinner fa-spin mr-2"></i> Processing...</>) : (<><i className="fas fa-wand-magic-sparkles mr-2"></i> Process with AI</>)}
+                        </button>
+                    </div>
+                  </div>
+              ) : (
+                  <div>
+                    <p className="text-sm text-text-secondary mb-4">AI has extracted the following recipients. Please review and confirm before adding them. Duplicates already in the system will be ignored.</p>
+                    <div className="overflow-x-auto rounded-lg border border-secondary max-h-96">
+                        <table className="min-w-full text-sm">
+                            <thead className="bg-secondary/60 sticky top-0">
+                                <tr>
+                                    <th className="py-2 px-3 text-left text-xs font-medium text-text-secondary uppercase">Name</th>
+                                    <th className="py-2 px-3 text-left text-xs font-medium text-text-secondary uppercase">Identifier</th>
+                                    <th className="py-2 px-3 text-left text-xs font-medium text-text-secondary uppercase">Type</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {extractedRecipients.map((rec, index) => (
+                                    <tr key={index} className="border-t border-secondary">
+                                        <td className="p-2">{rec.name}</td>
+                                        <td className="p-2">{rec.identifier}</td>
+                                        <td className="p-2">
+                                          <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getRecipientTypeColor(rec.type)}`}>
+                                            {rec.type}
+                                          </span>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                     <div className="mt-6 flex justify-between items-center">
+                        <button onClick={resetImportModal} className="text-text-secondary font-bold py-2 px-4 rounded-lg">
+                            <i className="fas fa-arrow-left mr-2"></i> Back
+                        </button>
+                        <button onClick={handleConfirmImport} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg">
+                            <i className="fas fa-check mr-2"></i> Confirm and Add Recipients
+                        </button>
+                    </div>
+                  </div>
+              )}
+            </Modal>
+          </div>
+        );
+      };
+      
+      const SettingsPage = () => {
+        return (
+            <div>
+                <h2 className="text-3xl font-bold text-text-primary mb-6">Settings</h2>
+                <div className="bg-surface p-6 rounded-lg shadow-md max-w-2xl">
+                    <h3 className="text-xl font-semibold text-text-primary mb-2">Data Management</h3>
+                    <p className="text-text-secondary mb-4 text-sm">Manage your application's stored data.</p>
+                    <div className="border-t border-secondary pt-4 mt-4">
+                        <p className="text-text-secondary text-sm italic">There are no data management options at the moment.</p>
+                    </div>
+                </div>
+            </div>
+        );
+      };
+
+      const calculateGrandTotalForItems = (items) => {
+        return (items || []).reduce((total, item) => {
+            const itemTotal = (item.q1_qty + item.q2_qty + item.q3_qty + item.q4_qty) * item.unitPrice;
+            return total + itemTotal;
+        }, 0);
+      };
+
+      const BudgetingPage = ({ onSaveBudget, budgetLogs, items: inventoryItems }) => {
+          const [budgetFile, setBudgetFile] = useState(null);
+          const [rawFileText, setRawFileText] = useState('');
+          const [isLoading, setIsLoading] = useState(false);
+          const [activeTab, setActiveTab] = useState('');
+          const [financialYear, setFinancialYear] = useState('');
+          const [departmentBudgets, setDepartmentBudgets] = useLocalStorage('temp_department_budgets_v2', {});
+          const toast = useToast();
+
+          const departments = useMemo(() => {
+              const depts = new Set(inventoryItems.map(i => i.department));
+              budgetLogs.forEach(log => depts.add(log.department));
+              const sortedDepts = Array.from(depts).sort();
+              if (sortedDepts.length > 0 && !activeTab) {
+                setActiveTab(sortedDepts[0]);
+              }
+              return sortedDepts;
+          }, [inventoryItems, budgetLogs]);
+
+          useEffect(() => {
+              const initialBudgets = { ...departmentBudgets };
+              let changed = false;
+              departments.forEach(dept => {
+                  if (!initialBudgets[dept]) {
+                      initialBudgets[dept] = [];
+                      changed = true;
+                  }
+              });
+              if (changed) {
+                  setDepartmentBudgets(initialBudgets);
+              }
+          }, [departments, setDepartmentBudgets]);
+
+          const overallGrandTotal = useMemo(() => {
+            return Object.values(departmentBudgets).reduce((total, items) => {
+                return total + calculateGrandTotalForItems(items || []);
+            }, 0);
+          }, [departmentBudgets]);
+
+          const handleFileChange = async (event) => {
+              const file = event.target.files[0];
+              if (!file) return;
+
+              setBudgetFile(file);
+              setRawFileText('');
+              const fileInput = event.target;
+
+              try {
+                  if (file.name.endsWith('.docx')) {
+                      if (typeof window.mammoth === 'undefined') {
+                        toast.error("Word document library (Mammoth.js) is not loaded yet. Please try again in a moment.");
+                        throw new Error("Mammoth.js not loaded");
+                      }
+                      const arrayBuffer = await file.arrayBuffer();
+                      const result = await window.mammoth.extractRawText({ arrayBuffer });
+                      setRawFileText(result.value);
+                      toast.success(`Word file "${file.name}" loaded.`);
+                  } else if (file.name.endsWith('.xlsx') || file.name.endsWith('.xls')) {
+                       if (typeof window.XLSX === 'undefined') {
+                        toast.error("Excel library (SheetJS) is not loaded yet. Please try again in a moment.");
+                        throw new Error("XLSX is not defined");
+                      }
+                      const arrayBuffer = await file.arrayBuffer();
+                      const data = new Uint8Array(arrayBuffer);
+                      const workbook = window.XLSX.read(data, { type: 'array' });
+                      let textContent = '';
+                      workbook.SheetNames.forEach(sheetName => {
+                          const worksheet = workbook.Sheets[sheetName];
+                          textContent += window.XLSX.utils.sheet_to_csv(worksheet) + '\n';
+                      });
+                      setRawFileText(textContent);
+                      toast.success(`Excel file "${file.name}" loaded.`);
+                  } else {
+                      toast.error("Unsupported file type. Please upload .docx, .xlsx, or .xls");
+                      setBudgetFile(null);
+                      if (fileInput) fileInput.value = '';
+                  }
+              } catch (error) {
+                  console.error("File processing error:", error);
+                  toast.error(`Failed to read the uploaded file: ${error.message}`);
+                  setBudgetFile(null);
+                  if (fileInput) fileInput.value = '';
+              }
+          };
+
+          const handleAnalyzeAndFill = async () => {
+              if (!rawFileText) {
+                  toast.error("No file loaded. Please upload a budget document first.");
+                  return;
+              }
+              if (!financialYear.trim()) {
+                  toast.error("Please enter the financial year for this budget.");
+                  return;
+              }
+
+              setIsLoading(true);
+              const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : null;
+              if (!apiKey) {
+                  toast.error("API Key not found. Configure it in your Vercel project settings.");
+                  setIsLoading(false);
+                  return;
+              }
+              
+              const responseSchema = {
+                type: Type.OBJECT,
+                properties: {
+                    department: {
+                        type: Type.STRING,
+                        description: `The department this budget is for. Choose one from this list: ${departments.join(', ')}. If you cannot determine the department, use 'General'.`
+                    },
+                    items: {
+                        type: Type.ARRAY,
+                        description: "An array of budget line items.",
+                        items: {
+                            type: Type.OBJECT,
+                            properties: {
+                                itemName: { type: Type.STRING, description: "Name of the budget item." },
+                                unitOfIssue: { type: Type.STRING, description: "The unit of issue for the item (e.g., PCS, ROLLS, PKTS). Default to 'PCS' if not specified." },
+                                quantity: { type: Type.NUMBER, description: "Total quantity for the financial year. Default to 1 if not specified." },
+                                unitPrice: { type: Type.NUMBER, description: "Price per unit of the item. Default to 0 if not specified." },
+                            },
+                            required: ["itemName", "quantity", "unitPrice", "unitOfIssue"]
+                        }
+                    }
+                }
+              };
+
+              try {
+                  const ai = new GoogleGenAI({ apiKey });
+                  const prompt = `You are a procurement assistant. Extract structured budget information from the following unstructured text from a document named "${budgetFile.name}". Identify the department, item names, their units of issue, total quantities, and unit prices. Adhere strictly to the JSON schema.
+
+                  **Document Text:**
+                  ${rawFileText}`;
+
+                  const response = await ai.models.generateContent({
+                      model: 'gemini-2.5-flash',
+                      contents: prompt,
+                      config: {
+                          responseMimeType: "application/json",
+                          responseSchema: responseSchema,
+                      },
+                  });
+
+                  const result = JSON.parse(response.text);
+                  const inferredDept = result.department || 'General';
+                  const budgetItems = (result.items || []).map(item => ({
+                      id: Math.random(),
+                      description: item.itemName || '',
+                      unitOfIssue: item.unitOfIssue || 'PCS',
+                      unitPrice: item.unitPrice || 0,
+                      q1_qty: item.quantity || 0,
+                      q2_qty: 0,
+                      q3_qty: 0,
+                      q4_qty: 0,
+                  }));
+
+                  if (departments.includes(inferredDept)) {
+                      setDepartmentBudgets(prev => ({ ...prev, [inferredDept]: budgetItems }));
+                      setActiveTab(inferredDept);
+                      toast.success(`AI has populated the budget for ${inferredDept}. Total quantities have been placed in Q1.`);
+                  } else {
+                      toast.error(`AI inferred an unknown department: '${inferredDept}'. Please add it to inventory or check the document.`);
+                  }
+
+              } catch (err) {
+                  console.error("Gemini API Error:", err);
+                  toast.error("AI analysis failed. The document might be unreadable or the API key is invalid.");
+              } finally {
+                  setIsLoading(false);
+              }
+          };
+          
+          const handleBudgetItemChange = (dept, index, field, value) => {
+              const updatedItems = [...departmentBudgets[dept]];
+              const isNumericField = ['unitPrice', 'q1_qty', 'q2_qty', 'q3_qty', 'q4_qty'].includes(field);
+              const parsedValue = isNumericField ? parseFloat(value) || 0 : value;
+              updatedItems[index] = { ...updatedItems[index], [field]: parsedValue };
+              setDepartmentBudgets(prev => ({ ...prev, [dept]: updatedItems }));
+          };
+          
+          const addBudgetItem = (dept) => {
+            const newItem = { id: Date.now(), description: '', unitOfIssue: 'PCS', unitPrice: 0, q1_qty: 0, q2_qty: 0, q3_qty: 0, q4_qty: 0 };
+            setDepartmentBudgets(prev => ({...prev, [dept]: [...(prev[dept] || []), newItem]}));
+          };
+          
+          const removeBudgetItem = (dept, index) => {
+              setDepartmentBudgets(prev => ({...prev, [dept]: prev[dept].filter((_, i) => i !== index) }));
+          };
+
+          const handleSaveBudget = (department) => {
+              if (!financialYear.trim()) {
+                  toast.error("Please enter a financial year before saving.");
+                  return;
+              }
+              const budgetData = departmentBudgets[department] || [];
+              if (budgetData.length === 0) {
+                  toast.info(`No items to save for ${department}.`);
+                  return;
+              }
+              onSaveBudget({
+                  department,
+                  financialYear,
+                  items: budgetData,
+              });
+              toast.success(`Budget for ${department} (${financialYear}) has been saved.`);
+          };
+
+          return (
+              <div>
+                  <h2 className="text-3xl font-bold text-text-primary mb-6">AI-Assisted Budgeting</h2>
+                  
+                  <div className="bg-surface p-6 rounded-lg shadow-md mb-8">
+                      <div className="mb-6 p-4 bg-sky-50 border border-sky-200 rounded-lg text-sm text-sky-800">
+                          <p className="font-bold mb-2"><i className="fas fa-info-circle mr-2"></i>Instructions</p>
+                          <p>1. Upload a budget request (Word or Excel file).</p>
+                          <p>2. The AI will read it and populate the form for the correct department below (placing total quantity in Q1).</p>
+                          <p>3. Review, distribute quantities quarterly, and save the official budget. You can download a professional PDF.</p>
+                      </div>
+                      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-end">
+                          <div className="md:col-span-1">
+                             <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="budgetFile">Upload Budget Document</label>
+                             <input type="file" id="budgetFile" onChange={handleFileChange} className="w-full text-text-secondary text-sm file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-primary file:text-white hover:file:bg-sky-500 cursor-pointer" accept=".xlsx, .xls, .docx" />
+                          </div>
+                          <div className="md:col-span-1">
+                           <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="financialYear">Financial Year</label>
+                           <input type="text" id="financialYear" value={financialYear} onChange={(e) => setFinancialYear(e.target.value)} className="w-full bg-slate-100 text-text-primary p-2.5 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" placeholder="e.g., 2024/2025" required />
+                        </div>
+                          <div className="md:col-span-1">
+                              <button onClick={handleAnalyzeAndFill} disabled={isLoading || !rawFileText} className="w-full bg-accent hover:bg-amber-300 text-gray-900 font-bold py-2.5 px-6 rounded-lg flex items-center justify-center transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed">
+                                  {isLoading ? (<><i className="fas fa-spinner fa-spin mr-2"></i> Analyzing...</>) : (<><i className="fas fa-wand-magic-sparkles mr-2"></i> Process & Fill Form</>)}
+                              </button>
+                          </div>
+                      </div>
+                      <div className="mt-6 pt-4 border-t border-secondary flex justify-center items-center">
+                        <div className="text-center">
+                            <h4 className="text-sm font-medium text-text-secondary uppercase tracking-wider">Overall Budget Total (All Departments)</h4>
+                            <p className="text-3xl font-bold text-primary mt-1">
+                                Ksh. {overallGrandTotal.toFixed(2)}
+                            </p>
+                        </div>
+                    </div>
+                  </div>
+                  
+                  <div className="bg-surface p-6 rounded-lg shadow-md">
+                      <h3 className="text-xl font-semibold text-text-primary mb-4">Departmental Budget Forms</h3>
+                       <div className="border-b border-secondary">
+                          <nav className="-mb-px flex space-x-4 overflow-x-auto" aria-label="Tabs">
+                              {departments.map(dept => (
+                                  <button key={dept} onClick={() => setActiveTab(dept)} className={`${activeTab === dept ? 'border-primary text-primary' : 'border-transparent text-text-secondary hover:text-text-primary hover:border-gray-300'} whitespace-nowrap py-3 px-1 border-b-2 font-medium text-sm`}>
+                                      {dept}
+                                  </button>
+                              ))}
+                          </nav>
+                      </div>
+                      
+                      <div className="pt-6">
+                        {departments.map(dept => (
+                            <div key={dept} className={`${activeTab === dept ? 'block' : 'hidden'}`}>
+                                <div className="overflow-x-auto rounded-lg border border-secondary">
+                                    <table className="min-w-full text-sm">
+                                        <thead className="bg-secondary/60">
+                                            <tr>
+                                                <th rowSpan="2" className="py-2 px-2 text-left text-xs font-medium text-text-secondary uppercase border-b border-r">S/No</th>
+                                                <th rowSpan="2" className="py-2 px-2 text-left text-xs font-medium text-text-secondary uppercase border-b border-r min-w-[200px]">Description</th>
+                                                <th rowSpan="2" className="py-2 px-2 text-left text-xs font-medium text-text-secondary uppercase border-b border-r">Unit</th>
+                                                <th rowSpan="2" className="py-2 px-2 text-left text-xs font-medium text-text-secondary uppercase border-b border-r">Unit Price</th>
+                                                <th colSpan="2" className="py-2 px-2 text-center text-xs font-medium text-text-secondary uppercase border-b border-r">Q1 (Jul-Sep)</th>
+                                                <th colSpan="2" className="py-2 px-2 text-center text-xs font-medium text-text-secondary uppercase border-b border-r">Q2 (Oct-Dec)</th>
+                                                <th colSpan="2" className="py-2 px-2 text-center text-xs font-medium text-text-secondary uppercase border-b border-r">Q3 (Jan-Mar)</th>
+                                                <th colSpan="2" className="py-2 px-2 text-center text-xs font-medium text-text-secondary uppercase border-b border-r">Q4 (Apr-Jun)</th>
+                                                <th rowSpan="2" className="py-2 px-2 text-left text-xs font-medium text-text-secondary uppercase border-b border-r">Total F/Y</th>
+                                                <th rowSpan="2" className="py-2 px-2 text-center text-xs font-medium text-text-secondary uppercase border-b"></th>
+                                            </tr>
+                                            <tr>
+                                                <th className="py-1 px-2 text-left text-xs font-medium text-text-secondary uppercase border-b border-r">Qty</th><th className="py-1 px-2 text-left text-xs font-medium text-text-secondary uppercase border-b border-r">Total</th>
+                                                <th className="py-1 px-2 text-left text-xs font-medium text-text-secondary uppercase border-b border-r">Qty</th><th className="py-1 px-2 text-left text-xs font-medium text-text-secondary uppercase border-b border-r">Total</th>
+                                                <th className="py-1 px-2 text-left text-xs font-medium text-text-secondary uppercase border-b border-r">Qty</th><th className="py-1 px-2 text-left text-xs font-medium text-text-secondary uppercase border-b border-r">Total</th>
+                                                <th className="py-1 px-2 text-left text-xs font-medium text-text-secondary uppercase border-b border-r">Qty</th><th className="py-1 px-2 text-left text-xs font-medium text-text-secondary uppercase border-b border-r">Total</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-secondary">
+                                            {(departmentBudgets[dept] || []).map((item, index) => {
+                                                const q1Total = item.q1_qty * item.unitPrice;
+                                                const q2Total = item.q2_qty * item.unitPrice;
+                                                const q3Total = item.q3_qty * item.unitPrice;
+                                                const q4Total = item.q4_qty * item.unitPrice;
+                                                const yearlyTotal = q1Total + q2Total + q3Total + q4Total;
+                                                return (
+                                                <tr key={item.id}>
+                                                    <td className="p-1 text-center border-r">{index + 1}</td>
+                                                    <td className="p-1 border-r"><input type="text" value={item.description} onChange={e => handleBudgetItemChange(dept, index, 'description', e.target.value)} className="w-full bg-slate-100 p-2 rounded-md border-transparent focus:ring-primary focus:border-primary" /></td>
+                                                    <td className="p-1 border-r"><input type="text" value={item.unitOfIssue} onChange={e => handleBudgetItemChange(dept, index, 'unitOfIssue', e.target.value)} className="w-20 bg-slate-100 p-2 rounded-md border-transparent focus:ring-primary focus:border-primary" /></td>
+                                                    <td className="p-1 border-r"><input type="number" step="0.01" value={item.unitPrice} onChange={e => handleBudgetItemChange(dept, index, 'unitPrice', e.target.value)} className="w-24 bg-slate-100 p-2 rounded-md border-transparent focus:ring-primary focus:border-primary" /></td>
+                                                    <td className="p-1 border-r"><input type="number" value={item.q1_qty} onChange={e => handleBudgetItemChange(dept, index, 'q1_qty', e.target.value)} className="w-20 bg-slate-100 p-2 rounded-md border-transparent focus:ring-primary focus:border-primary" /></td>
+                                                    <td className="p-1 border-r bg-slate-50 text-right pr-2">{q1Total.toFixed(2)}</td>
+                                                    <td className="p-1 border-r"><input type="number" value={item.q2_qty} onChange={e => handleBudgetItemChange(dept, index, 'q2_qty', e.target.value)} className="w-20 bg-slate-100 p-2 rounded-md border-transparent focus:ring-primary focus:border-primary" /></td>
+                                                    <td className="p-1 border-r bg-slate-50 text-right pr-2">{q2Total.toFixed(2)}</td>
+                                                    <td className="p-1 border-r"><input type="number" value={item.q3_qty} onChange={e => handleBudgetItemChange(dept, index, 'q3_qty', e.target.value)} className="w-20 bg-slate-100 p-2 rounded-md border-transparent focus:ring-primary focus:border-primary" /></td>
+                                                    <td className="p-1 border-r bg-slate-50 text-right pr-2">{q3Total.toFixed(2)}</td>
+                                                    <td className="p-1 border-r"><input type="number" value={item.q4_qty} onChange={e => handleBudgetItemChange(dept, index, 'q4_qty', e.target.value)} className="w-20 bg-slate-100 p-2 rounded-md border-transparent focus:ring-primary focus:border-primary" /></td>
+                                                    <td className="p-1 border-r bg-slate-50 text-right pr-2">{q4Total.toFixed(2)}</td>
+                                                    <td className="p-1 border-r bg-slate-100 font-bold text-right pr-2">{yearlyTotal.toFixed(2)}</td>
+                                                    <td className="p-1 text-center"><button onClick={() => removeBudgetItem(dept, index)} className="text-red-500 hover:text-red-700 p-2"><i className="fas fa-trash-alt"></i></button></td>
+                                                </tr>
+                                            )})}
+                                        </tbody>
+                                    </table>
+                                </div>
+                                <div className="flex justify-between items-center mt-4">
+                                  <button onClick={() => addBudgetItem(dept)} className="text-primary font-semibold text-sm hover:text-sky-700"><i className="fas fa-plus mr-2"></i> Add Item</button>
+                                  <div className="flex items-center gap-4">
+                                    <div className="text-right">
+                                      <p className="text-sm text-text-secondary">Department Total</p>
+                                      <p className="font-bold text-lg text-text-primary">
+                                          Ksh. {calculateGrandTotalForItems(departmentBudgets[dept] || []).toFixed(2)}
+                                      </p>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={() => {
+                                                const currentItems = departmentBudgets[dept] || [];
+                                                const total = calculateGrandTotalForItems(currentItems);
+                                                exportBudgetToPdf(dept, financialYear, currentItems, total, null);
+                                            }}
+                                            className="bg-sky-600 hover:bg-sky-700 text-white font-bold py-2 px-4 rounded-lg flex items-center disabled:bg-sky-300 disabled:cursor-not-allowed"
+                                            disabled={!financialYear.trim() || (departmentBudgets[dept] || []).length === 0}
+                                        >
+                                            <i className="fas fa-file-pdf mr-1"></i> Full Year
+                                        </button>
+                                        
+                                        <div className="flex rounded-md shadow-sm border border-slate-300">
+                                            {['q1', 'q2', 'q3', 'q4'].map((q, i) => (
+                                                <button
+                                                    key={q}
+                                                    onClick={() => {
+                                                        const currentItems = departmentBudgets[dept] || [];
+                                                        exportBudgetToPdf(dept, financialYear, currentItems, 0, q);
+                                                    }}
+                                                    title={`Download ${q.toUpperCase()} PDF`}
+                                                    className={`px-3 py-2 bg-slate-50 text-slate-700 hover:bg-slate-200 text-sm font-semibold ${i > 0 ? 'border-l border-slate-300' : ''} disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed`}
+                                                    disabled={!financialYear.trim() || (departmentBudgets[dept] || []).length === 0 || (departmentBudgets[dept] || []).every(item => (item[`${q}_qty`] || 0) === 0)}
+                                                >
+                                                    {`Q${i + 1}`}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+                                    <button onClick={() => handleSaveBudget(dept)} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg">
+                                        <i className="fas fa-save mr-2"></i> Save Budget
+                                    </button>
+                                  </div>
+                                </div>
+                            </div>
+                        ))}
+                      </div>
+                  </div>
+              </div>
+          );
+      };
+
+
+      // From components/Sidebar.tsx
+      const NavLink = ({ page, iconClass, currentPage, setCurrentPage, children }) => {
+        const isActive = currentPage === page;
+        return (
+          <li
+            className={`flex items-center p-3 my-1 rounded-lg cursor-pointer transition-all duration-200 ${
+              isActive
+                ? 'bg-primary text-white shadow-lg'
+                : 'text-text-secondary hover:bg-slate-200 hover:text-primary'
+            }`}
+            onClick={() => setCurrentPage(page)}
+          >
+            <i className={`${iconClass} w-6 h-6 mr-3`}></i>
+            <span className="font-medium">{children}</span>
+          </li>
+        );
+      };
+
+      const Sidebar = ({ currentPage, setCurrentPage, onLogout }) => {
+        return (
+          <aside className="w-64 bg-surface p-4 flex flex-col justify-between shadow-lg">
+            <div>
+              <div className="text-center mb-10 p-2">
+                  <h1 className="text-base font-bold text-text-primary leading-tight">ELDAMA RAVINE TECHNICAL AND VOCATIONAL COLLEGE</h1>
+                  <p className="text-xs text-text-secondary mt-2 uppercase tracking-wider">Technology for Sustainable Development</p>
+                  <h2 className="text-lg font-semibold text-primary mt-2">Procurement Portal</h2>
+              </div>
+              <nav>
+                <ul>
+                  <NavLink page={Page.DASHBOARD} iconClass="fas fa-tachometer-alt" currentPage={currentPage} setCurrentPage={setCurrentPage}>
+                    Dashboard
+                  </NavLink>
+                  <NavLink page={Page.INVENTORY} iconClass="fas fa-box-open" currentPage={currentPage} setCurrentPage={setCurrentPage}>
+                    Inventory
+                  </NavLink>
+                  <NavLink page={Page.ISSUE_LOG} iconClass="fas fa-clipboard-list" currentPage={currentPage} setCurrentPage={setCurrentPage}>
+                    Issue Log
+                  </NavLink>
+                  <NavLink page={Page.RECIPIENTS} iconClass="fas fa-users" currentPage={currentPage} setCurrentPage={setCurrentPage}>
+                    Recipients
+                  </NavLink>
+                   <NavLink page={Page.BUDGETING} iconClass="fas fa-dollar-sign" currentPage={currentPage} setCurrentPage={setCurrentPage}>
+                    Budgeting
+                  </NavLink>
+                   <NavLink page={Page.SETTINGS} iconClass="fas fa-cog" currentPage={currentPage} setCurrentPage={setCurrentPage}>
+                    Settings
+                  </NavLink>
+                </ul>
+              </nav>
+            </div>
+             <div className="p-3">
+                <button
+                  onClick={onLogout}
+                  className="w-full flex items-center justify-center p-3 rounded-lg cursor-pointer transition-all duration-200 text-text-secondary hover:bg-red-100 hover:text-red-700"
+                >
+                  <i className="fas fa-sign-out-alt w-6 h-6 mr-3"></i>
+                  <span className="font-medium">Logout</span>
+                </button>
+                <div className="text-text-secondary text-xs mt-4 text-center">
+                  <p>&copy; {new Date().getFullYear()} ERTVC Procurement</p>
+                  <p className="mt-1">Created by Mr Bett Company</p>
+                </div>
+             </div>
+          </aside>
+        );
+      };
+      
+      // From components/LoginPage.tsx
+      const LoginPage = ({ onLogin, error }) => {
+        const [username, setUsername] = useState('');
+        const [password, setPassword] = useState('');
+
+        const handleLoginAttempt = (e) => {
+          e.preventDefault();
+          onLogin(username, password);
+        };
+        
+        const handleForgot = () => {
+          alert("Hint: The username is 'admin' and the password is 'password' for this demonstration.");
+        }
+
+        return (
+          <div className="flex items-center justify-center min-h-screen bg-gradient-to-br from-background to-secondary">
+            <div className="w-full max-w-md p-8 space-y-6 bg-surface rounded-xl shadow-2xl">
+              <div className="text-center mb-6">
+                <h1 className="text-xl font-bold text-text-primary leading-tight">ELDAMA RAVINE TECHNICAL AND VOCATIONAL COLLEGE</h1>
+                <p className="text-xs text-text-secondary mt-2 uppercase tracking-wider">Technology for Sustainable Development</p>
+                <h2 className="text-2xl font-semibold text-primary mt-2">Procurement Inventory Portal</h2>
+                <p className="text-text-secondary mt-1">Procurement Officer Login</p>
+              </div>
+              <form className="mt-8 space-y-6" onSubmit={handleLoginAttempt}>
+                {error && <p className="text-center text-sm font-medium text-red-600 bg-red-100 p-3 rounded-lg">{error}</p>}
+                <div className="relative">
+                  <label htmlFor="username" className="sr-only">Username</label>
+                  <input
+                    id="username"
+                    name="username"
+                    type="text"
+                    autoComplete="username"
+                    required
+                    className="w-full px-4 py-3 text-text-primary bg-slate-100 border-2 border-transparent rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="Username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                  />
+                </div>
+                <div className="relative">
+                  <label htmlFor="password" className="sr-only">Password</label>
+                  <input
+                    id="password"
+                    name="password"
+                    type="password"
+                    autoComplete="current-password"
+                    required
+                    className="w-full px-4 py-3 text-text-primary bg-slate-100 border-2 border-transparent rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                    placeholder="Password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                  />
+                </div>
+                <div className="flex items-center justify-between">
+                    <div className="text-sm">
+                        <a href="#" onClick={handleForgot} className="font-medium text-primary hover:text-sky-500">
+                            Forgot username or password?
+                        </a>
+                    </div>
+                </div>
+                <div>
+                  <button
+                    type="submit"
+                    className="w-full flex justify-center py-3 px-4 border border-transparent text-sm font-medium rounded-md text-white bg-primary hover:bg-sky-500 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-primary transition-colors"
+                  >
+                    Sign in
+                  </button>
+                </div>
+              </form>
+              <div className="pt-4 mt-4 border-t border-secondary text-center">
+                  <p className="text-xs text-text-secondary mt-2">
+                     Created by Mr Bett Company
+                  </p>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      // Main App Component (from App.tsx)
+      const App = () => {
+        const [isAuthenticated, setIsAuthenticated] = useLocalStorage('inventory_auth', false);
+        const [loginError, setLoginError] = useState('');
+        const [currentPage, setCurrentPage] = useState(Page.DASHBOARD);
+        const toast = useToast();
+        
+        const [analysis, setAnalysis] = useState('');
+        const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
+        
+        // --- OFFLINE/SYNC STATE ---
+        const [isOnline, setIsOnline] = useState(navigator.onLine);
+        const [isSyncing, setIsSyncing] = useState(false);
+        const [syncQueue, setSyncQueue] = useLocalStorage('inventory_sync_queue_v2', []);
+        
+        // --- DATA STATE ---
+        const [items, setItems] = useLocalStorage('inventory_items_v2', [
+          { id: '1', name: 'Laptop Pro', quantity: 25, category: 'Electronics', dateAdded: '2023-10-01', unit: 'pcs', isAsset: true, department: 'ICT Department', isForIGA: false },
+          { id: '2', name: 'Wireless Mouse', quantity: 50, category: 'Accessories', dateAdded: '2023-10-05', unit: 'pcs', isAsset: true, department: 'ICT Department', isForIGA: false },
+          { id: '3', name: 'Projector', quantity: 10, category: 'Electronics', dateAdded: '2023-09-15', unit: 'pcs', isAsset: true, department: 'Training Department', isForIGA: false },
+          { id: '4', name: 'Whiteboard Markers (Pack)', quantity: 100, category: 'Stationery', dateAdded: '2023-10-10', unit: 'pcs', isAsset: false, department: 'Procurement', isForIGA: false },
+          { id: '5', name: 'Office Chair', quantity: 5, category: 'Furniture', dateAdded: '2023-08-20', unit: 'pcs', isAsset: true, department: 'Administration', isForIGA: false },
+          { id: '6', name: 'Notebooks (Pack of 10)', quantity: 200, category: 'Stationery', dateAdded: '2023-10-12', unit: 'pcs', isAsset: false, department: 'Procurement', isForIGA: false },
+          { id: '7', name: 'Cooking Oil', quantity: 30, category: 'Consumables', dateAdded: '2023-10-20', unit: 'kgs', isAsset: false, department: 'Kitchen', isForIGA: false },
+          { id: '8', name: 'Rice', quantity: 150, category: 'Consumables', dateAdded: '2023-10-20', unit: 'kgs', isAsset: false, department: 'Kitchen', isForIGA: false },
+          { id: '9', name: 'Chef Knife Set', quantity: 3, category: 'Equipment', dateAdded: '2023-09-01', unit: 'pcs', isAsset: true, department: 'Kitchen', isForIGA: false },
+          { id: '10', name: 'Three phase 4 way distribution', quantity: 5, category: 'Electrical', dateAdded: '2024-01-01', unit: 'pcs', isAsset: false, department: 'Electrical Engineering', isForIGA: false },
+          { id: '11', name: 'Maize Seeds', quantity: 50, category: 'Farming Inputs', dateAdded: '2024-02-01', unit: 'kgs', isAsset: false, department: 'Agriculture', isForIGA: true },
+        ]);
+
+        const [issueRecords, setIssueRecords] = useLocalStorage('inventory_issue_records_v2', [
+          { id: 'rec1', itemId: '1', itemName: 'Laptop Pro', quantityIssued: 1, recipientName: 'John Doe (TRN001)', recipientType: 'Trainer', dateIssued: '2023-10-15', unit: 'pcs', returnDate: '2023-11-15', isAsset: true, isReturned: false },
+          { id: 'rec2', itemId: '4', itemName: 'Whiteboard Markers (Pack)', quantityIssued: 5, recipientName: 'Jane Smith (ADM015)', recipientType: 'Trainee', dateIssued: '2023-10-16', unit: 'pcs', isAsset: false, isReturned: false },
+          { id: 'rec3', itemId: '2', itemName: 'Wireless Mouse', quantityIssued: 1, recipientName: 'Peter Jones (NTS005)', recipientType: 'Non-teaching Staff', dateIssued: '2023-10-17', unit: 'pcs', returnDate: '2023-11-01', isAsset: true, isReturned: true, actualReturnDate: '2023-10-30' },
+          { id: 'rec4', itemId: '3', itemName: 'Projector', quantityIssued: 1, recipientName: 'Alice Johnson (ADM1001)', recipientType: 'Trainee', dateIssued: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], unit: 'pcs', returnDate: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], isAsset: true, isReturned: false },
+          { id: 'rec5', itemId: '11', itemName: 'Maize Seeds', quantityIssued: 10, recipientName: 'College Farm (IGA001)', recipientType: 'Income Generating Activities', dateIssued: '2024-02-05', unit: 'kgs', isAsset: false, isReturned: false },
+        ]);
+
+        const [recipients, setRecipients] = useLocalStorage('inventory_recipients_v2', [
+          { id: 'trainee1', name: 'Alice Johnson', identifier: 'ADM1001', type: 'Trainee' },
+          { id: 'trainee2', name: 'Bob Williams', identifier: 'ADM1002', type: 'Trainee' },
+          { id: 'trainer1', name: 'Charles Brown', identifier: 'TRN2001', type: 'Trainer' },
+          { id: 'staff1', name: 'Diana Miller', identifier: 'NTS3001', type: 'Non-teaching Staff' },
+          { id: 'iga1', name: 'College Farm', identifier: 'IGA001', type: 'Income Generating Activities' },
+        ]);
+        
+        const [budgetLogs, setBudgetLogs] = useLocalStorage('inventory_budget_logs_v2', []);
+
+        // --- OFFLINE & SYNC LOGIC ---
+        const syncOfflineChanges = useCallback(async () => {
+          if (syncQueue.length === 0 || isSyncing) return;
+      
+          setIsSyncing(true);
+          toast.info(`Syncing ${syncQueue.length} offline changes...`);
+      
+          const queueToProcess = [...syncQueue];
+          const successfullySyncedIds = [];
+      
+          for (const action of queueToProcess) {
+            try {
+              // --- API SIMULATION ---
+              // In a real app, this would be an actual fetch() call to your backend API.
+              // For example: await fetch('/api/sync', { method: 'POST', body: JSON.stringify(action) });
+              console.log('Simulating API call for action:', action.type, action.payload);
+              await new Promise(resolve => setTimeout(resolve, 300)); // Fake network delay
+              // --- END SIMULATION ---
+      
+              successfullySyncedIds.push(action.id);
+            } catch (error) {
+              console.error('Failed to sync action:', action, error);
+              toast.error(`Failed to sync an action. Will retry later.`);
+              // Stop syncing on the first error to maintain the correct order of operations.
+              break;
+            }
+          }
+      
+          // Remove successfully processed actions from the queue.
+          if (successfullySyncedIds.length > 0) {
+            setSyncQueue(prev => prev.filter(action => !successfullySyncedIds.includes(action.id)));
+          }
+      
+          setIsSyncing(false);
+          if (successfullySyncedIds.length === queueToProcess.length) {
+            toast.success('All changes synced successfully!');
+          } else if (successfullySyncedIds.length > 0) {
+            toast.info(`${successfullySyncedIds.length} of ${queueToProcess.length} changes synced.`);
+          }
+        }, [syncQueue, isSyncing, setSyncQueue, toast]);
+
+        useEffect(() => {
+          const handleOnline = () => {
+            toast.success("You are back online.");
+            setIsOnline(true);
+          };
+          const handleOffline = () => {
+            toast.info("You are now offline. Changes will be saved locally.");
+            setIsOnline(false);
+          };
+      
+          window.addEventListener('online', handleOnline);
+          window.addEventListener('offline', handleOffline);
+      
+          // When component mounts or online status changes to true, try to sync.
+          if (isOnline) {
+            syncOfflineChanges();
+          }
+      
+          return () => {
+            window.removeEventListener('online', handleOnline);
+            window.removeEventListener('offline', handleOffline);
+          };
+        }, [isOnline, syncOfflineChanges, toast]);
+        
+        // --- DERIVED STATE ---
+        const dashboardStats = useMemo(() => {
+          const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
+          const lowStockItems = items.filter(item => item.quantity <= 10).length;
+          const totalIssued = issueRecords.reduce((sum, record) => sum + record.quantityIssued, 0);
+          const categories = [...new Set(items.map(item => item.category))].length;
+          return { totalItems, lowStockItems, totalIssued, categories };
+        }, [items, issueRecords]);
+
+        const addActionToQueue = (type, payload) => {
+          setSyncQueue(prev => [...prev, { id: Date.now(), type, payload }]);
+        };
+
+        // --- HANDLERS (MODIFIED FOR OFFLINE) ---
+        const handleAddItem = (item) => {
+          const newItem = {
+            ...item,
+            id: new Date().toISOString(),
+            dateAdded: new Date().toISOString().split('T')[0],
+          };
+          setItems(prev => [newItem, ...prev]);
+          addActionToQueue('ADD_ITEM', newItem);
+        };
+        
+        const handleAddMultipleItems = (itemsToAdd) => {
+          const newItems = itemsToAdd.map(item => ({
+            ...item,
+            id: `new-${Date.now()}-${Math.random()}`,
+            dateAdded: new Date().toISOString().split('T')[0],
+          }));
+
+          setItems(prev => [...newItems, ...prev]);
+          addActionToQueue('ADD_MULTIPLE_ITEMS', newItems);
+          toast.success(`${newItems.length} items added to inventory.`);
+        };
+        
+        const handleSaveBudget = (budgetData) => {
+            const newLog = {
+                id: new Date().toISOString(),
+                uploadDate: new Date().toLocaleDateString(),
+                ...budgetData,
+            };
+            setBudgetLogs(prev => {
+                const existingIndex = prev.findIndex(log => log.department === newLog.department && log.financialYear === newLog.financialYear);
+                if (existingIndex > -1) {
+                    const updatedLogs = [...prev];
+                    updatedLogs[existingIndex] = newLog;
+                    return updatedLogs;
+                }
+                return [newLog, ...prev];
+            });
+            addActionToQueue('SAVE_BUDGET', newLog);
+        };
+
+        const handleIssueItem = (issueDetails) => {
+          const itemToUpdate = items.find(item => item.id === issueDetails.itemId);
+          if (itemToUpdate && itemToUpdate.quantity >= issueDetails.quantityIssued) {
+            const newIssueRecord = {
+              ...issueDetails,
+              id: new Date().toISOString(),
+              itemName: itemToUpdate.name,
+              unit: itemToUpdate.unit,
+              dateIssued: new Date().toISOString().split('T')[0],
+              isAsset: itemToUpdate.isAsset,
+              isReturned: false,
+            };
+
+            setItems(prevItems =>
+              prevItems.map(item =>
+                item.id === issueDetails.itemId
+                  ? { ...item, quantity: item.quantity - issueDetails.quantityIssued }
+                  : item
+              )
+            );
+
+            setIssueRecords(prevRecords => [newIssueRecord, ...prevRecords]);
+            addActionToQueue('ISSUE_ITEM', { record: newIssueRecord, itemId: issueDetails.itemId, quantity: issueDetails.quantityIssued });
+            return true;
+          }
+          toast.error('Not enough stock to issue the requested quantity.');
+          return false;
+        };
+        
+        const handleReturnAsset = (recordId) => {
+            const recordToReturn = issueRecords.find(rec => rec.id === recordId);
+            if (!recordToReturn) return;
+
+            const updatedRecord = { ...recordToReturn, isReturned: true, actualReturnDate: new Date().toISOString().split('T')[0] };
+
+            setIssueRecords(prev => prev.map(rec => rec.id === recordId ? updatedRecord : rec));
+            setItems(prev => prev.map(item => 
+                item.id === recordToReturn.itemId
+                    ? { ...item, quantity: item.quantity + recordToReturn.quantityIssued }
+                    : item
+            ));
+            
+            addActionToQueue('RETURN_ASSET', { recordId: recordId, returnDate: updatedRecord.actualReturnDate });
+            toast.success(`'${recordToReturn.itemName}' has been returned to stock.`);
+        };
+
+
+        const handleAddRecipient = (recipient) => {
+          const newRecipient = {
+            ...recipient,
+            id: new Date().toISOString(),
+          };
+          setRecipients(prev => [newRecipient, ...prev]);
+          addActionToQueue('ADD_RECIPIENT', newRecipient);
+        };
+
+        const handleImportRecipients = (importedRecipients) => {
+          const existingIdentifiers = new Set(recipients.map(r => r.identifier.toLowerCase()));
+          const newUniqueRecipients = importedRecipients
+            .filter(r => !existingIdentifiers.has(r.identifier.toLowerCase()))
+            .map(r => ({ ...r, id: `imported-${Date.now()}-${Math.random()}` }));
+          
+          if(newUniqueRecipients.length > 0) {
+            setRecipients(prev => [...newUniqueRecipients, ...prev]);
+            addActionToQueue('IMPORT_RECIPIENTS', newUniqueRecipients);
+          }
+          toast.success(`${newUniqueRecipients.length} new recipients imported. ${importedRecipients.length - newUniqueRecipients.length} duplicates were ignored.`);
+        };
+
+        const handleLogin = (user, pass) => {
+          if (user === 'admin' && pass === 'password') {
+            setIsAuthenticated(true);
+            setLoginError('');
+            toast.success("Welcome! You are now logged in.");
+          } else {
+            setLoginError('Invalid username or password. Please try again.');
+          }
+        };
+
+        const handleLogout = () => {
+          setIsAuthenticated(false);
+          // Don't clear local storage on logout, so data persists.
+          toast.info("You have been logged out.");
+        };
+
+        const handleGenerateAnalysis = useCallback(async () => {
+          if (!isOnline) {
+            toast.error("AI analysis requires an internet connection.");
+            return;
+          }
+          setIsLoadingAnalysis(true);
+          setAnalysis('');
+          
+          const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : null;
+
+          if (!apiKey) {
+            toast.error("API Key not found. Please configure it in your Vercel project settings.");
+            setIsLoadingAnalysis(false);
+            return;
+          }
+          
+          try {
+            const ai = new GoogleGenAI({ apiKey });
+            const prompt = `
+              Analyze the following inventory data for a technical college. Provide a brief, insightful summary (3-4 bullet points) for a procurement officer. Focus on action items.
+
+              **Current Stock:**
+              ${JSON.stringify(items.map(i => ({ name: i.name, quantity: i.quantity, category: i.category })), null, 2)}
+
+              **Recent Issue Log:**
+              ${JSON.stringify(issueRecords.slice(0, 10).map(i => ({ item: i.itemName, qty: i.quantityIssued, to: i.recipientType})), null, 2)}
+            `;
+
+            const response = await ai.models.generateContent({
+              model: 'gemini-2.5-flash',
+              contents: prompt,
+            });
+            
+            setAnalysis(response.text.replace(/\\n/g, '\n'));
+          } catch (err) {
+            console.error("Gemini API Error:", err);
+            toast.error("Failed to get AI analysis. Please check the API key and try again.");
+            setAnalysis('Error: Could not retrieve analysis.');
+          } finally {
+            setIsLoadingAnalysis(false);
+          }
+        }, [items, issueRecords, toast, isOnline]);
+
+
+        const renderPage = () => {
+          switch (currentPage) {
+            case Page.DASHBOARD:
+              return <Dashboard stats={dashboardStats} items={items} issueRecords={issueRecords} onGenerateAnalysis={handleGenerateAnalysis} analysis={analysis} isLoadingAnalysis={isLoadingAnalysis} />;
+            case Page.INVENTORY:
+              return <Inventory items={items} recipients={recipients} onAddItem={handleAddItem} onIssueItem={handleIssueItem} onAddMultipleItems={handleAddMultipleItems} />;
+            case Page.ISSUE_LOG:
+              return <IssueLog records={issueRecords} onReturnAsset={handleReturnAsset} />;
+            case Page.RECIPIENTS:
+              return <RecipientsPage recipients={recipients} onAddRecipient={handleAddRecipient} onImportRecipients={handleImportRecipients} />;
+            case Page.SETTINGS:
+                return <SettingsPage />;
+            case Page.BUDGETING:
+                return <BudgetingPage onSaveBudget={handleSaveBudget} budgetLogs={budgetLogs} items={items} />;
+            default:
+              return <Dashboard stats={dashboardStats} items={items} issueRecords={issueRecords} onGenerateAnalysis={handleGenerateAnalysis} analysis={analysis} isLoadingAnalysis={isLoadingAnalysis} />;
+          }
+        };
+
+        if (!isAuthenticated) {
+          return <LoginPage onLogin={handleLogin} error={loginError} />;
+        }
+
+        return (
+          <div className="flex h-screen bg-gradient-to-br from-background to-secondary text-text-primary">
+            <Sidebar currentPage={currentPage} setCurrentPage={setCurrentPage} onLogout={handleLogout} />
+            <main className="flex-1 p-6 lg:p-10 overflow-auto">
+              {renderPage()}
+            </main>
+            <OnlineStatusIndicator isOnline={isOnline} isSyncing={isSyncing} syncQueueLength={syncQueue.length} />
+          </div>
+        );
+      };
+
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(
+          <ToastProvider>
+              <App />
+          </ToastProvider>
+      );
+    </script>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>

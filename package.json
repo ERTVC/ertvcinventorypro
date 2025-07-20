@@ -1,0 +1,8 @@
+{
+  "name": "ertvc-inventory-pro-static",
+  "version": "2.0.0",
+  "private": true,
+  "scripts": {
+    "build": "mkdir public && cp index.html service-worker.js public/"
+  }
+}

@@ -1,0 +1,22 @@
+
+{
+  "short_name": "Inventory Pro",
+  "name": "Inventory Pro 2.0",
+  "description": "An AI-powered inventory and budget management portal for procurement officers.",
+  "icons": [
+    {
+      "src": "https://storage.googleapis.com/prompt-images/inventory-icon-192.png",
+      "type": "image/png",
+      "sizes": "192x192"
+    },
+    {
+      "src": "https://storage.googleapis.com/prompt-images/inventory-icon-512.png",
+      "type": "image/png",
+      "sizes": "512x512"
+    }
+  ],
+  "start_url": ".",
+  "display": "standalone",
+  "theme_color": "#0284c7",
+  "background_color": "#f1f5f9"
+}
