@@ -35,7 +35,6 @@
     "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
     "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
     "recharts": "https://esm.sh/recharts@2.12.7",
-    "@google/genai": "https://esm.sh/@google/genai@0.15.0",
     "react/": "https://esm.sh/react@18.3.1/",
     "react-dom/": "https://esm.sh/react-dom@18.3.1/"
   }
@@ -73,16 +72,48 @@
       import React, { useState, useMemo, useContext, createContext, useEffect, useCallback } from 'react';
       import ReactDOM from 'react-dom/client';
       import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-      import { GoogleGenAI, Type } from '@google/genai';
       
       // --- Consolidated Application Code ---
       
-      // --- START: Gemini AI Client Initialization ---
-      // This will use the API_KEY from the environment variables.
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      // --- END: Gemini AI Client Initialization ---
+      // --- START: Gemini API Helper ---
+      // This helper calls the backend serverless function, which securely handles the API key.
+      const callGeminiAPI = async (params) => {
+        try {
+          const response = await fetch('/api/gemini', {
+              method: 'POST',
+              headers: {
+                  'Content-Type': 'application/json',
+              },
+              body: JSON.stringify(params),
+          });
+
+          if (!response.ok) {
+              const errorBody = await response.json().catch(() => ({ error: { message: `API request failed with status ${response.status}` } }));
+              const errorMessage = errorBody?.error?.message || 'An unknown error occurred.';
+              throw new Error(`An error occurred while communicating with the AI service: ${errorMessage}`);
+          }
+
+          return response.json(); // The serverless function returns a JSON object e.g. { text: "..." }
+        } catch (err) {
+            console.error("Error calling /api/gemini:", err);
+            // Re-throw the error so the calling function can handle it.
+            throw err;
+        }
+      };
+      // --- END: Gemini API Helper ---
 
       // From types.ts
+      // Replicating the Type enum locally to avoid a dependency on @google/genai on the client-side.
+      const Type = {
+          TYPE_UNSPECIFIED: 'TYPE_UNSPECIFIED',
+          STRING: 'STRING',
+          NUMBER: 'NUMBER',
+          INTEGER: 'INTEGER',
+          BOOLEAN: 'BOOLEAN',
+          ARRAY: 'ARRAY',
+          OBJECT: 'OBJECT',
+          NULL: 'NULL',
+      };
       const UnitType = { PCS: 'pcs', KGS: 'kgs', ROLLS: 'rolls', PKTS: 'pkts' };
       const RecipientType = {
           TRAINEE: 'Trainee',
@@ -1129,17 +1160,19 @@
 
                 **Document Text:**
                 ${fileTextContent}`;
-
-                const response = await ai.models.generateContent({
+                
+                const apiParams = {
                     model: 'gemini-2.5-flash',
                     contents: prompt,
                     config: {
                         responseMimeType: "application/json",
                         responseSchema: responseSchema,
                     },
-                });
+                };
 
+                const response = await callGeminiAPI(apiParams);
                 const result = JSON.parse(response.text);
+
                 if (result.items && result.items.length > 0) {
                     const formattedItems = result.items.map(item => ({
                         id: `temp-${Math.random()}`,
@@ -1158,7 +1191,7 @@
                 }
 
             } catch (err) {
-                console.error("Gemini API Error:", err);
+                console.error("AI API Error:", err);
                 toast.error(`AI analysis failed: ${err.message}`);
             } finally {
                 setIsProcessing(false);
@@ -1729,17 +1762,19 @@
 
               **Document Text:**
               ${rawFileText}`;
-
-              const response = await ai.models.generateContent({
+              
+              const apiParams = {
                   model: 'gemini-2.5-flash',
                   contents: prompt,
                   config: {
                       responseMimeType: "application/json",
                       responseSchema: responseSchema,
                   },
-              });
+              };
 
+              const response = await callGeminiAPI(apiParams);
               const result = JSON.parse(response.text);
+
               if (result.recipients && result.recipients.length > 0) {
                   const formattedRecipients = result.recipients.map(rec => ({
                       name: rec.name,
@@ -1753,7 +1788,7 @@
               }
 
           } catch (err) {
-              console.error("Gemini API Error:", err);
+              console.error("AI API Error:", err);
               toast.error(`AI analysis failed: ${err.message}`);
           } finally {
               setIsProcessingAI(false);
@@ -2387,16 +2422,17 @@
 
                   **Document Text:**
                   ${rawFileText}`;
-
-                  const response = await ai.models.generateContent({
+                  
+                  const apiParams = {
                       model: 'gemini-2.5-flash',
                       contents: prompt,
                       config: {
                           responseMimeType: "application/json",
                           responseSchema: responseSchema,
                       },
-                  });
+                  };
 
+                  const response = await callGeminiAPI(apiParams);
                   const result = JSON.parse(response.text);
                   const inferredDept = result.department || 'General';
                   const budgetItems = (result.items || []).map(item => ({
@@ -2419,7 +2455,7 @@
                   }
 
               } catch (err) {
-                  console.error("Gemini API Error:", err);
+                  console.error("AI API Error:", err);
                   toast.error(`AI analysis failed: ${err.message}`);
               } finally {
                   setIsLoading(false);
@@ -3379,15 +3415,16 @@
               ${JSON.stringify(issueRecords.slice(0, 10).map(i => ({ item: i.itemName, qty: i.quantityIssued, to: i.recipientType})), null, 2)}
             `;
 
-            const response = await ai.models.generateContent({
+            const apiParams = {
               model: 'gemini-2.5-flash',
               contents: prompt,
-            });
+            };
+            const response = await callGeminiAPI(apiParams);
             
             setAnalysis(response.text.replace(/\\n/g, '\n'));
           } catch (err) {
-            console.error("Gemini API Error:", err);
-            toast.error(`Failed to get AI analysis: ${err.message}`);
+            console.error("AI API Error:", err);
+            toast.error(`AI analysis failed: ${err.message}`);
             setAnalysis('Error: Could not retrieve analysis.');
           } finally {
             setIsLoadingAnalysis(false);
