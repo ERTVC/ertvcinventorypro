@@ -76,6 +76,11 @@
       import { GoogleGenAI, Type } from '@google/genai';
       
       // --- Consolidated Application Code ---
+      
+      // --- START: Gemini AI Client Initialization ---
+      // This will use the API_KEY from the environment variables.
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      // --- END: Gemini AI Client Initialization ---
 
       // From types.ts
       const UnitType = { PCS: 'pcs', KGS: 'kgs', ROLLS: 'rolls', PKTS: 'pkts' };
@@ -207,31 +212,6 @@
         );
       };
       // --- END: UTILITIES & HOOKS ---
-
-      // --- START: API HELPER ---
-      const callGeminiApi = async (params) => {
-          try {
-              const response = await fetch('/api/gemini', {
-                  method: 'POST',
-                  headers: {
-                      'Content-Type': 'application/json',
-                  },
-                  body: JSON.stringify(params),
-              });
-
-              if (!response.ok) {
-                  const errorData = await response.json().catch(() => ({ error: { message: response.statusText } }));
-                  throw new Error(errorData.error.message || `API request failed with status ${response.status}`);
-              }
-              
-              return await response.json();
-          } catch (error) {
-              console.error("API Helper Error:", error);
-              // Re-throw a more user-friendly error.
-              throw new Error(`An error occurred while communicating with the AI service: ${error.message}`);
-          }
-      };
-      // --- END: API HELPER ---
 
       // --- START: OFFLINE & SYNC COMPONENTS ---
       const OnlineStatusIndicator = ({ isOnline, isSyncing, syncQueueLength }) => {
@@ -1150,7 +1130,7 @@
                 **Document Text:**
                 ${fileTextContent}`;
 
-                const response = await callGeminiApi({
+                const response = await ai.models.generateContent({
                     model: 'gemini-2.5-flash',
                     contents: prompt,
                     config: {
@@ -1750,7 +1730,7 @@
               **Document Text:**
               ${rawFileText}`;
 
-              const response = await callGeminiApi({
+              const response = await ai.models.generateContent({
                   model: 'gemini-2.5-flash',
                   contents: prompt,
                   config: {
@@ -2408,7 +2388,7 @@
                   **Document Text:**
                   ${rawFileText}`;
 
-                  const response = await callGeminiApi({
+                  const response = await ai.models.generateContent({
                       model: 'gemini-2.5-flash',
                       contents: prompt,
                       config: {
@@ -3399,7 +3379,7 @@
               ${JSON.stringify(issueRecords.slice(0, 10).map(i => ({ item: i.itemName, qty: i.quantityIssued, to: i.recipientType})), null, 2)}
             `;
 
-            const response = await callGeminiApi({
+            const response = await ai.models.generateContent({
               model: 'gemini-2.5-flash',
               contents: prompt,
             });
