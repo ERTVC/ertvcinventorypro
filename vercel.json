@@ -1,13 +1,15 @@
 {
   "version": 2,
+  "builds": [
+    {
+      "src": "api/**/*.js",
+      "use": "@vercel/node"
+    }
+  ],
   "routes": [
     {
-      "src": "/api/(.*)",
-      "dest": "/api/$1"
-    },
-    {
       "src": "/service-worker.js",
-      "headers": { 
+      "headers": {
         "Cache-Control": "public, max-age=0, must-revalidate",
         "Content-Type": "application/javascript"
       },
@@ -19,6 +21,10 @@
         "Content-Type": "application/manifest+json"
       },
       "dest": "/manifest.json"
+    },
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/$1"
     },
     {
       "src": "/(.*)",
