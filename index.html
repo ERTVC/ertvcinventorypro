@@ -1971,6 +1971,37 @@
       }) => {
           const toast = useToast();
           const [restoreFile, setRestoreFile] = useState(null);
+          const [apiStatus, setApiStatus] = useState({ checked: false, status: 'unknown', message: '' });
+          const [isChecking, setIsChecking] = useState(false);
+
+          const handleRunDiagnostics = async () => {
+              setIsChecking(true);
+              setApiStatus({ checked: false, status: 'checking', message: '' });
+              try {
+                  const response = await fetch('/api/health');
+                  if (!response.ok) {
+                      let errorMessage = `Request failed with status ${response.status}`;
+                      try {
+                          const errorData = await response.json();
+                          errorMessage = errorData.error?.message || errorMessage;
+                      } catch (e) { /* ignore json parsing error */ }
+                      throw new Error(errorMessage);
+                  }
+                  const data = await response.json();
+                  setApiStatus({ checked: true, status: 'ok', message: data.message });
+                  toast.success("API Health Check Successful!");
+              } catch (error) {
+                  console.error("API Health Check failed:", error);
+                   const message = error.message.includes("404") 
+                    ? "The health check endpoint was not found (404). This confirms a general issue with serverless function deployment. Please check your hosting provider's logs."
+                    : `Could not connect to the backend API. This is likely a deployment issue. Error: ${error.message}`;
+
+                  setApiStatus({ checked: true, status: 'error', message });
+                  toast.error("API Health Check Failed.");
+              } finally {
+                  setIsChecking(false);
+              }
+          };
 
           const handleDownloadBackup = () => {
               try {
@@ -2258,30 +2289,53 @@
                             <UserManagement />
                         )}
                       </div>
-                      <div className="bg-surface p-6 rounded-lg shadow-md">
-                          <h3 className="text-xl font-semibold text-text-primary mb-2">Data Management</h3>
-                          <p className="text-text-secondary mb-4 text-sm">Download a full backup of all your data, or restore the application state from a backup file.</p>
-                          
-                          <div className="border-t border-secondary pt-6 mt-6">
-                              <h4 className="text-lg font-semibold text-text-primary mb-3">Backup Data</h4>
-                              <p className="text-text-secondary text-sm mb-4">Download all inventory, logs, users, and recipient data into a single JSON file. Keep this file safe.</p>
-                              <button onClick={handleDownloadBackup} className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg flex items-center">
-                                  <i className="fas fa-download mr-2"></i> Download Full Backup
-                              </button>
-                          </div>
-
-                          <div className="border-t border-secondary pt-6 mt-6">
-                              <h4 className="text-lg font-semibold text-text-primary mb-3">Restore Data</h4>
-                              <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-900 mb-4">
-                                  <p className="font-bold"><i className="fas fa-exclamation-triangle mr-2"></i>Warning</p>
-                                  <p>Restoring will replace all existing data, including users. This action cannot be undone.</p>
-                              </div>
-                              <div className="flex items-center space-x-4">
-                                  <input type="file" onChange={handleFileChange} accept=".json,application/json" className="flex-grow text-text-secondary text-sm file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-slate-200 file:text-slate-700 hover:file:bg-slate-300 cursor-pointer"/>
-                                  <button onClick={handleRestoreBackup} disabled={!restoreFile} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg flex items-center disabled:bg-slate-400 disabled:cursor-not-allowed">
-                                      <i className="fas fa-upload mr-2"></i> Restore
+                      <div className="space-y-8">
+                          <div className="bg-surface p-6 rounded-lg shadow-md">
+                              <h3 className="text-xl font-semibold text-text-primary mb-2">Data Management</h3>
+                              <p className="text-text-secondary mb-4 text-sm">Download a full backup of all your data, or restore the application state from a backup file.</p>
+                              
+                              <div className="border-t border-secondary pt-6 mt-6">
+                                  <h4 className="text-lg font-semibold text-text-primary mb-3">Backup Data</h4>
+                                  <p className="text-text-secondary text-sm mb-4">Download all inventory, logs, users, and recipient data into a single JSON file. Keep this file safe.</p>
+                                  <button onClick={handleDownloadBackup} className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg flex items-center">
+                                      <i className="fas fa-download mr-2"></i> Download Full Backup
                                   </button>
                               </div>
+
+                              <div className="border-t border-secondary pt-6 mt-6">
+                                  <h4 className="text-lg font-semibold text-text-primary mb-3">Restore Data</h4>
+                                  <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-900 mb-4">
+                                      <p className="font-bold"><i className="fas fa-exclamation-triangle mr-2"></i>Warning</p>
+                                      <p>Restoring will replace all existing data, including users. This action cannot be undone.</p>
+                                  </div>
+                                  <div className="flex items-center space-x-4">
+                                      <input type="file" onChange={handleFileChange} accept=".json,application/json" className="flex-grow text-text-secondary text-sm file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-slate-200 file:text-slate-700 hover:file:bg-slate-300 cursor-pointer"/>
+                                      <button onClick={handleRestoreBackup} disabled={!restoreFile} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg flex items-center disabled:bg-slate-400 disabled:cursor-not-allowed">
+                                          <i className="fas fa-upload mr-2"></i> Restore
+                                      </button>
+                                  </div>
+                              </div>
+                          </div>
+                          <div className="bg-surface p-6 rounded-lg shadow-md">
+                              <h3 className="text-xl font-semibold text-text-primary mb-2">System Diagnostics</h3>
+                              <p className="text-text-secondary mb-4 text-sm">
+                                  If AI features are failing, run these diagnostics to check the connection to the backend serverless functions.
+                              </p>
+                              <button 
+                                  onClick={handleRunDiagnostics} 
+                                  disabled={isChecking}
+                                  className="bg-accent hover:bg-amber-300 text-gray-900 font-bold py-2 px-4 rounded-lg flex items-center justify-center transition-colors disabled:bg-slate-300 disabled:cursor-wait w-full"
+                              >
+                                  {isChecking ? (<><i className="fas fa-spinner fa-spin mr-2"></i> Checking...</>) : (<><i className="fas fa-stethoscope mr-2"></i> Run API Health Check</>)}
+                              </button>
+                              {apiStatus.checked && (
+                                  <div className={`mt-4 p-4 rounded-lg text-sm ${apiStatus.status === 'ok' ? 'bg-green-50 border-green-200 text-green-800' : 'bg-red-50 border-red-200 text-red-800'}`}>
+                                      <p className="font-bold flex items-center">
+                                          {apiStatus.status === 'ok' ? <><i className="fas fa-check-circle mr-2"></i>API Status: OK</> : <><i className="fas fa-times-circle mr-2"></i>API Status: Error</>}
+                                      </p>
+                                      <p className="mt-1">{apiStatus.message}</p>
+                                  </div>
+                              )}
                           </div>
                       </div>
                   </div>
@@ -3378,60 +3432,59 @@
         const handleLogin = (user, pass) => {
           const foundUser = users.find(u => u.username.toLowerCase() === user.toLowerCase() && u.password === pass);
           if (foundUser) {
-            setCurrentUser({
-                id: foundUser.id,
-                username: foundUser.username,
-                role: foundUser.role,
-            });
+            setCurrentUser(foundUser);
             setLoginError('');
-            toast.success("Welcome! You are now logged in.");
+            setCurrentPage(Page.DASHBOARD);
+            toast.success(`Welcome back, ${foundUser.username}!`);
           } else {
             setLoginError('Invalid username or password. Please try again.');
           }
         };
 
         const handleLogout = () => {
-          setCurrentUser(null);
-          // Don't clear local storage on logout, so data persists.
-          toast.info("You have been logged out.");
+          if (window.confirm("Are you sure you want to log out?")) {
+            setCurrentUser(null);
+            setCurrentPage(Page.DASHBOARD);
+            toast.info("You have been logged out.");
+          }
         };
+        
+        const handleGenerateAnalysis = async () => {
+            setIsLoadingAnalysis(true);
+            setAnalysis('');
+            try {
+                const prompt = `Analyze the following inventory data and provide a concise summary (around 100 words) of the current stock status. Highlight any potential issues like low stock items, surplus items, or unusual concentrations of items in one category or department. The tone should be professional and direct.
 
-        const handleGenerateAnalysis = useCallback(async () => {
-          if (!isOnline) {
-            toast.error("AI analysis requires an internet connection.");
-            return;
-          }
-          setIsLoadingAnalysis(true);
-          setAnalysis('');
-          
-          try {
-            const prompt = `
-              Analyze the following inventory data for a technical college. Provide a brief, insightful summary (3-4 bullet points) for a procurement officer. Focus on action items.
+                Inventory Items:
+                ${JSON.stringify(items.map(i => ({ name: i.name, quantity: i.quantity, category: i.category, department: i.department, isAsset: i.isAsset })), null, 2)}
+                
+                Issue Log:
+                ${JSON.stringify(issueRecords.map(r => ({ itemName: r.itemName, quantity: r.quantityIssued, recipientType: r.recipientType, dateIssued: r.dateIssued })), null, 2)}
+                `;
 
-              **Current Stock:**
-              ${JSON.stringify(items.map(i => ({ name: i.name, quantity: i.quantity, category: i.category, condition: i.condition })), null, 2)}
+                const apiParams = {
+                    model: 'gemini-2.5-flash',
+                    contents: prompt,
+                    config: {
+                        temperature: 0.5,
+                        topK: 32,
+                        topP: 1,
+                        maxOutputTokens: 250,
+                    },
+                };
+                
+                const response = await callGeminiAPI(apiParams);
+                setAnalysis(response.text);
 
-              **Recent Issue Log:**
-              ${JSON.stringify(issueRecords.slice(0, 10).map(i => ({ item: i.itemName, qty: i.quantityIssued, to: i.recipientType})), null, 2)}
-            `;
-
-            const apiParams = {
-              model: 'gemini-2.5-flash',
-              contents: prompt,
-            };
-            const response = await callGeminiAPI(apiParams);
-            
-            setAnalysis(response.text.replace(/\\n/g, '\n'));
-          } catch (err) {
-            console.error("AI API Error:", err);
-            toast.error(`AI analysis failed: ${err.message}`);
-            setAnalysis('Error: Could not retrieve analysis.');
-          } finally {
-            setIsLoadingAnalysis(false);
-          }
-        }, [items, issueRecords, toast, isOnline]);
-
-        const renderPage = () => {
+            } catch (err) {
+                console.error("AI Analysis Error:", err);
+                toast.error(`AI analysis failed: ${err.message}`);
+            } finally {
+                setIsLoadingAnalysis(false);
+            }
+        };
+        
+        const mainContent = () => {
           switch (currentPage) {
             case Page.DASHBOARD:
               return <Dashboard stats={dashboardStats} items={items} issueRecords={issueRecords} onGenerateAnalysis={handleGenerateAnalysis} analysis={analysis} isLoadingAnalysis={isLoadingAnalysis} institutionalLogo={institutionalLogo} />;
@@ -3441,28 +3494,18 @@
               return <IssueLog records={issueRecords} onReturnAsset={handleOpenReturnModal} />;
             case Page.RECIPIENTS:
               return <RecipientsPage recipients={recipients} onAddRecipient={handleAddRecipient} onImportRecipients={handleImportRecipients} />;
-            case Page.SETTINGS:
-                return <SettingsPage 
-                            currentUser={currentUser}
-                            users={users}
-                            setUsers={setUsers}
-                            items={items}
-                            issueRecords={issueRecords}
-                            recipients={recipients}
-                            budgetLogs={budgetLogs}
-                            disposalRecords={disposalRecords}
-                            setItems={setItems}
-                            setIssueRecords={setIssueRecords}
-                            setRecipients={setRecipients}
-                            setBudgetLogs={setBudgetLogs}
-                            setDisposalRecords={setDisposalRecords}
-                            institutionalLogo={institutionalLogo}
-                            setInstitutionalLogo={setInstitutionalLogo}
-                        />;
             case Page.BUDGETING:
                 return <BudgetingPage onSaveBudget={handleSaveBudget} budgetLogs={budgetLogs} items={items} institutionalLogo={institutionalLogo} />;
             case Page.ASSET_DISPOSAL:
                 return <AssetDisposalPage disposalRecords={disposalRecords} obsoleteItems={obsoleteItemsForDisposal} onInitiateDisposal={handleInitiateDisposal} onUpdateStatus={handleUpdateDisposalStatus} institutionalLogo={institutionalLogo} />;
+            case Page.SETTINGS:
+              return <SettingsPage 
+                        currentUser={currentUser} 
+                        users={users} setUsers={setUsers}
+                        items={items} issueRecords={issueRecords} recipients={recipients} budgetLogs={budgetLogs} disposalRecords={disposalRecords}
+                        setItems={setItems} setIssueRecords={setIssueRecords} setRecipients={setRecipients} setBudgetLogs={setBudgetLogs} setDisposalRecords={setDisposalRecords}
+                        institutionalLogo={institutionalLogo} setInstitutionalLogo={setInstitutionalLogo}
+                      />;
             default:
               return <Dashboard stats={dashboardStats} items={items} issueRecords={issueRecords} onGenerateAnalysis={handleGenerateAnalysis} analysis={analysis} isLoadingAnalysis={isLoadingAnalysis} institutionalLogo={institutionalLogo} />;
           }
@@ -3472,72 +3515,48 @@
           return <LoginPage onLogin={handleLogin} error={loginError} />;
         }
 
-        const ReturnAssetModal = () => {
-            const [condition, setCondition] = useState(AssetCondition.GOOD);
-
-            useEffect(() => {
-                if (recordToReturn?.itemId) {
-                    const item = items.find(i => i.id === recordToReturn.itemId);
-                    setCondition(item?.condition || AssetCondition.GOOD);
-                }
-            }, [recordToReturn]);
-
-            if (!isReturnModalOpen || !recordToReturn) return null;
-
-            const handleSubmit = (e) => {
-                e.preventDefault();
-                handleConfirmReturnAsset(recordToReturn.id, condition);
-            };
-
-            return (
-                <Modal isOpen={isReturnModalOpen} onClose={() => setReturnModalOpen(false)} title={`Return: ${recordToReturn.itemName}`}>
-                    <form onSubmit={handleSubmit}>
-                        <div className="mb-4">
-                            <p className="text-sm text-text-secondary">Select the condition of the returned asset. Obsolete items will be written off and not returned to stock.</p>
-                        </div>
-                        <fieldset className="space-y-3">
-                            <legend className="text-text-secondary text-sm font-bold mb-2">Asset Condition</legend>
-                            {Object.values(AssetCondition).map(cond => (
-                                <label key={cond} className="flex items-center p-3 border rounded-lg hover:bg-slate-50 cursor-pointer transition-colors">
-                                    <input
-                                        type="radio"
-                                        name="condition"
-                                        value={cond}
-                                        checked={condition === cond}
-                                        onChange={() => setCondition(cond)}
-                                        className="h-4 w-4 text-primary focus:ring-primary border-slate-300"
-                                    />
-                                    <span className="ml-3 text-sm font-medium text-text-primary">{cond}</span>
-                                </label>
-                            ))}
-                        </fieldset>
-                        <div className="flex justify-end mt-6">
-                            <button type="button" onClick={() => setReturnModalOpen(false)} className="text-text-secondary font-bold py-2 px-4 rounded-lg mr-2">Cancel</button>
-                            <button type="submit" className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg">Confirm Return</button>
-                        </div>
-                    </form>
-                </Modal>
-            );
-        };
-
         return (
-          <div className="flex h-screen bg-gradient-to-br from-background to-secondary text-text-primary">
+          <div className="flex h-screen bg-background">
             <Sidebar currentPage={currentPage} setCurrentPage={setCurrentPage} onLogout={handleLogout} institutionalLogo={institutionalLogo} />
-            <main className="flex-1 p-6 lg:p-10 overflow-auto">
-              {renderPage()}
+            <main className="flex-1 p-8 overflow-y-auto">
+              {mainContent()}
             </main>
             <OnlineStatusIndicator isOnline={isOnline} isSyncing={isSyncing} syncQueueLength={syncQueue.length} />
-            <ReturnAssetModal />
+            <Modal isOpen={isReturnModalOpen} onClose={() => setReturnModalOpen(false)} title={`Process Return for: ${recordToReturn?.itemName}`}>
+                {recordToReturn && (
+                    <div className="space-y-4">
+                        <p className="text-text-secondary">Please assess the condition of the returned asset.</p>
+                        <div>
+                            {[AssetCondition.GOOD, AssetCondition.SERVICEABLE, AssetCondition.OBSOLETE].map(condition => (
+                                <button
+                                    key={condition}
+                                    onClick={() => handleConfirmReturnAsset(recordToReturn.id, condition)}
+                                    className={`w-full text-left p-4 rounded-lg mb-2 transition-colors border ${getConditionColor(condition)} hover:shadow-md`}
+                                >
+                                    <h4 className="font-bold">{condition}</h4>
+                                    <p className="text-xs">
+                                        {condition === AssetCondition.GOOD && "The asset is in perfect working order with no damage."}
+                                        {condition === AssetCondition.SERVICEABLE && "The asset has minor damage but is still functional or can be repaired."}
+                                        {condition === AssetCondition.OBSOLETE && "The asset is broken, non-functional, or technologically outdated and cannot be re-issued."}
+                                    </p>
+                                </button>
+                            ))}
+                        </div>
+                    </div>
+                )}
+            </Modal>
           </div>
         );
       };
-
-      const root = ReactDOM.createRoot(document.getElementById('root'));
-      root.render(
-          <ToastProvider>
-              <App />
-          </ToastProvider>
+      
+      const Root = () => (
+        <ToastProvider>
+          <App />
+        </ToastProvider>
       );
+      
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<Root />);
     </script>
   <script type="module" src="/index.tsx"></script>
 </body>
