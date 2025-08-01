@@ -1,21 +1,4 @@
 
 {
-  "version": 2,
-  "comment": "This file gives Vercel explicit instructions to ensure the /api folder is built as serverless functions. This is the definitive fix for 404 errors on API routes.",
-  "builds": [
-    {
-      "src": "api/*.js",
-      "use": "@vercel/node"
-    }
-  ],
-  "routes": [
-    {
-      "src": "/api/(.*)",
-      "dest": "/api/$1"
-    },
-    {
-      "src": "/(.*)",
-      "dest": "index.html"
-    }
-  ]
+  "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }]
 }
