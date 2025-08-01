@@ -1,7 +1,40 @@
 {
+  "version": 2,
+  "builds": [
+    {
+      "src": "api/**/*.js",
+      "use": "@vercel/node"
+    },
+    {
+      "src": "index.html",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "service-worker.js",
+      "use": "@vercel/static"
+    },
+    {
+      "src": "manifest.json",
+      "use": "@vercel/static"
+    }
+  ],
   "routes": [
-    { "src": "/api/health", "dest": "/api/health.js" },
-    { "src": "/api/gemini", "dest": "/api/gemini.js" },
-    { "src": "/(.*)", "dest": "/index.html" }
+    {
+      "src": "/api/(.*)",
+      "dest": "/api/$1"
+    },
+    {
+      "src": "/service-worker.js",
+      "headers": { "Cache-Control": "s-maxage=0" },
+      "dest": "/service-worker.js"
+    },
+    {
+      "src": "/manifest.json",
+      "dest": "/manifest.json"
+    },
+    {
+      "src": "/(.*)",
+      "dest": "/index.html"
+    }
   ]
 }

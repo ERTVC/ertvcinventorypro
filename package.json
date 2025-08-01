@@ -2,9 +2,7 @@
   "name": "ertvc-inventory-pro-static",
   "version": "2.0.0",
   "private": true,
-  "scripts": {
-    "build": "mkdir -p public && cp index.html service-worker.js manifest.json public/"
-  },
+  "scripts": {},
   "dependencies": {
     "@google/genai": "^0.15.0"
   }
