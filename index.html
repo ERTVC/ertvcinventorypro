@@ -7,7 +7,7 @@
     <link rel="manifest" href="/manifest.json">
     <link rel="apple-touch-icon" href="https://storage.googleapis.com/prompt-images/inventory-icon-192.png">
     <meta name="theme-color" content="#0284c7">
-    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
+    <script src="https://cdn.tailwindcss.com?plugins=typography,forms"></script>
     <script>
       tailwind.config = {
         theme: {
@@ -35,9 +35,9 @@
     "react/jsx-runtime": "https://esm.sh/react@18.3.1/jsx-runtime",
     "react-dom/client": "https://esm.sh/react-dom@18.3.1/client",
     "recharts": "https://esm.sh/recharts@2.12.7",
+    "@google/genai": "https://esm.sh/@google/genai@0.15.0",
     "react/": "https://esm.sh/react@18.3.1/",
-    "react-dom/": "https://esm.sh/react-dom@18.3.1/",
-    "@google/genai": "https://esm.sh/@google/genai"
+    "react-dom/": "https://esm.sh/react-dom@18.3.1/"
   }
 }
 </script>
@@ -73,7 +73,7 @@
       import React, { useState, useMemo, useContext, createContext, useEffect, useCallback } from 'react';
       import ReactDOM from 'react-dom/client';
       import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
-      import { GoogleGenAI, Type } from "@google/genai";
+      import { GoogleGenAI, Type } from '@google/genai';
       
       // --- Consolidated Application Code ---
 
@@ -100,6 +100,29 @@
           RECIPIENTS: 'Recipients',
           SETTINGS: 'Settings',
           BUDGETING: 'Budgeting',
+          ASSET_DISPOSAL: 'Asset Disposal',
+      };
+      const AssetCondition = {
+        GOOD: 'Good',
+        SERVICEABLE: 'Damaged (Serviceable)',
+        OBSOLETE: 'Damaged (Obsolete)',
+      };
+      const DisposalStatus = {
+        PENDING: 'Pending Approval',
+        APPROVED: 'Approved',
+        DISPOSED: 'Disposed',
+        CANCELLED: 'Cancelled',
+      };
+      const DisposalMethod = {
+          AUCTION: 'Sale by Public Auction',
+          TENDER: 'Sale by Public Tender',
+          DESTRUCTION: 'Destruction',
+          TRANSFER: 'Transfer to another Public Entity',
+          DONATION: 'Donation',
+      };
+      const UserRole = {
+          ADMIN: 'Admin',
+          OFFICER: 'Officer',
       };
       
       // --- START: UTILITIES & HOOKS ---
@@ -185,6 +208,31 @@
       };
       // --- END: UTILITIES & HOOKS ---
 
+      // --- START: API HELPER ---
+      const callGeminiApi = async (params) => {
+          try {
+              const response = await fetch('/api/gemini', {
+                  method: 'POST',
+                  headers: {
+                      'Content-Type': 'application/json',
+                  },
+                  body: JSON.stringify(params),
+              });
+
+              if (!response.ok) {
+                  const errorData = await response.json().catch(() => ({ error: { message: response.statusText } }));
+                  throw new Error(errorData.error.message || `API request failed with status ${response.status}`);
+              }
+              
+              return await response.json();
+          } catch (error) {
+              console.error("API Helper Error:", error);
+              // Re-throw a more user-friendly error.
+              throw new Error(`An error occurred while communicating with the AI service: ${error.message}`);
+          }
+      };
+      // --- END: API HELPER ---
+
       // --- START: OFFLINE & SYNC COMPONENTS ---
       const OnlineStatusIndicator = ({ isOnline, isSyncing, syncQueueLength }) => {
           let statusText = isOnline ? 'Online' : 'Offline';
@@ -235,59 +283,73 @@
         );
       };
 
-      const createPdfDoc = (orientation = 'portrait') => {
+      const createPdfDoc = (orientation = 'portrait', institutionalLogo) => {
         const { jsPDF } = window.jspdf;
         const doc = new jsPDF({ orientation });
+        const pageWidth = doc.internal.pageSize.getWidth();
+        const centerX = pageWidth / 2;
 
-        const COAT_OF_ARMS_BASE64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
-        const ERTVC_LOGO_BASE64 = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+        // The old implementation had a coat of arms and a right-aligned logo.
+        // This is updated to place a single logo at the top-center, above the institution name.
+        const defaultLogo = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=';
+        const logoToUse = institutionalLogo || defaultLogo;
         
-        doc.addImage(COAT_OF_ARMS_BASE64, 'PNG', 15, 12, 25, 25);
-        doc.addImage(ERTVC_LOGO_BASE64, 'PNG', doc.internal.pageSize.getWidth() - 40, 12, 25, 25);
-        
-        const centerX = doc.internal.pageSize.getWidth() / 2;
+        let currentY = 12;
+
+        // Add logo at the top center. The default is a 1x1 transparent pixel, which is effectively invisible.
+        const logoWidth = 25;
+        const logoHeight = 25;
+        const logoX = (pageWidth - logoWidth) / 2;
+        doc.addImage(logoToUse, 'PNG', logoX, currentY, logoWidth, logoHeight);
+        currentY += logoHeight + 6; // Move Y down for text, giving space for the logo.
         
         doc.setFontSize(14);
         doc.setFont('helvetica', 'bold');
         doc.setTextColor('#1e293b');
-        doc.text('ELDAMA RAVINE TECHNICAL AND', centerX, 18, { align: 'center' });
-        doc.text('VOCATIONAL COLLEGE', centerX, 25, { align: 'center' });
+        doc.text('ELDAMA RAVINE TECHNICAL AND', centerX, currentY, { align: 'center' });
+        currentY += 7;
+        doc.text('VOCATIONAL COLLEGE', centerX, currentY, { align: 'center' });
+        currentY += 9;
 
         doc.setFontSize(9);
         doc.setFont('helvetica', 'normal');
         doc.setTextColor('#1e293b');
-        doc.text('P.O. BOX 560-20103 – ELDAMA RAVINE', centerX, 34, { align: 'center' });
-        doc.text('(MAJI MAZURI – MAKUTANO ROAD)', centerX, 39, { align: 'center' });
-        doc.text('Phone: 0729226734', centerX, 44, { align: 'center' });
+        doc.text('P.O. BOX 560-20103 – ELDAMA RAVINE', centerX, currentY, { align: 'center' });
+        currentY += 5;
+        doc.text('(MAJI MAZURI – MAKUTANO ROAD)', centerX, currentY, { align: 'center' });
+        currentY += 5;
+        doc.text('Phone: 0729226734', centerX, currentY, { align: 'center' });
+        currentY += 6;
 
-        const emailX = centerX - 20;
-        const websiteX = centerX + 20;
+        const emailX = centerX - 40;
+        const websiteX = centerX + 40;
         
         doc.setFont('helvetica', 'bold');
-        doc.text('EMAIL:', emailX, 50, { align: 'right' });
+        doc.text('EMAIL:', emailX, currentY, { align: 'right' });
         doc.setFont('helvetica', 'normal');
         doc.setTextColor('#0000ff');
-        doc.textWithLink('principal@ertvc.ac.ke', emailX + 2, 50, { url: 'mailto:principal@ertvc.ac.ke' });
+        doc.textWithLink('principal@ertvc.ac.ke', emailX + 2, currentY, { url: 'mailto:principal@ertvc.ac.ke' });
 
         doc.setFont('helvetica', 'bold');
         doc.setTextColor('#1e293b');
-        doc.text('WEBSITE:', websiteX, 50, { align: 'right' });
+        doc.text('WEBSITE:', websiteX, currentY, { align: 'right' });
         doc.setFont('helvetica', 'normal');
         doc.setTextColor('#0000ff');
-        doc.textWithLink('http://www.ertvc.ac.ke', websiteX + 2, 50, { url: 'http://www.ertvc.ac.ke' });
+        doc.textWithLink('http://www.ertvc.ac.ke', websiteX + 2, currentY, { url: 'http://www.ertvc.ac.ke' });
+        currentY += 6;
         
         doc.setDrawColor(0);
         doc.setLineWidth(0.5);
-        doc.line(10, 56, doc.internal.pageSize.getWidth() - 10, 56);
+        doc.line(10, currentY, pageWidth - 10, currentY);
 
         return doc;
       };
 
-      const exportToPdf = (title, headers, data, filename) => {
+      const exportToPdf = (title, headers, data, filename, institutionalLogo) => {
         try {
-            const doc = createPdfDoc('portrait');
+            const doc = createPdfDoc('portrait', institutionalLogo);
             
-            const tableStartY = 70;
+            const tableStartY = 90;
 
             doc.setFontSize(14);
             doc.setFont('helvetica', 'bold');
@@ -324,11 +386,135 @@
             alert("An error occurred while generating the PDF. The file may be corrupt or a library is missing.");
         }
       };
-
-      const exportBudgetToPdf = (department, financialYear, items, grandTotal, quarter = null) => {
+      
+      const exportDisposalFormToPdf = (record, institutionalLogo) => {
         try {
-            const doc = createPdfDoc('landscape');
-            const tableStartY = 70;
+            const doc = createPdfDoc('portrait', institutionalLogo);
+            let y = 90;
+
+            doc.setFontSize(14);
+            doc.setFont('helvetica', 'bold');
+            doc.setTextColor('#1e293b');
+            doc.text('ASSET DISPOSAL FORM (SP/DISP/1)', doc.internal.pageSize.getWidth() / 2, y, { align: 'center' });
+            y += 10;
+            
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'normal');
+            doc.text(`Request ID: ${record.requestId}`, 15, y);
+            doc.text(`Request Date: ${new Date(record.requestDate).toLocaleDateString()}`, doc.internal.pageSize.getWidth() - 15, y, { align: 'right' });
+            y += 8;
+
+            // PART A
+            doc.setFontSize(11);
+            doc.setFont('helvetica', 'bold');
+            doc.text('PART A: DETAILS OF ASSETS RECOMMENDED FOR DISPOSAL', 15, y);
+            y += 2;
+            doc.setLineWidth(0.2);
+            doc.line(15, y, doc.internal.pageSize.getWidth() - 15, y);
+            y += 6;
+
+            const head = [['S/No', 'Asset Name', 'Category', 'Department', 'Date Acquired']];
+            const body = record.assets.map((asset, index) => [
+                index + 1,
+                asset.name,
+                asset.category,
+                asset.department,
+                new Date(asset.dateAdded).toLocaleDateString()
+            ]);
+
+            doc.autoTable({
+                startY: y,
+                head: head,
+                body: body,
+                theme: 'grid',
+                headStyles: { fillColor: [2, 132, 199], textColor: 255, fontStyle: 'bold' },
+                styles: { fontSize: 9, cellPadding: 2.5 },
+                alternateRowStyles: { fillColor: [241, 245, 249] }
+            });
+            y = doc.autoTable.previous.finalY + 10;
+
+            const drawSection = (title, content, height) => {
+                doc.setFontSize(11);
+                doc.setFont('helvetica', 'bold');
+                doc.text(title, 15, y);
+                y += 2;
+                doc.setLineWidth(0.2);
+                doc.line(15, y, doc.internal.pageSize.getWidth() - 15, y);
+                y += 5;
+                doc.setFontSize(10);
+                doc.setFont('helvetica', 'normal');
+                doc.rect(15, y, doc.internal.pageSize.getWidth() - 30, height);
+                doc.text(content, 17, y + 5, { maxWidth: doc.internal.pageSize.getWidth() - 34, split: true });
+                y += height + 10;
+            }
+
+            // PART B & C
+            drawSection('PART B: REASONS FOR DISPOSAL', record.reason, 30);
+            drawSection(
+              'PART C: BOARD OF SURVEY RECOMMENDATION',
+              `The Board of Survey, comprising of:\n- ${record.boardOfSurvey.join('\n- ')}\n\nrecommends the following disposal method:\n${record.method}`,
+              40
+            );
+
+            // PART D
+            doc.setFontSize(11);
+            doc.setFont('helvetica', 'bold');
+            doc.text('PART D: APPROVAL', 15, y);
+            y += 2;
+            doc.setLineWidth(0.2);
+            doc.line(15, y, doc.internal.pageSize.getWidth() - 15, y);
+            y += 8;
+
+            const signatureY = y;
+            const gap = 10;
+            const signatureWidth = (doc.internal.pageSize.getWidth() - 30 - (2 * gap)) / 3;
+            const signatureHeight = 30;
+
+            let currentX = 15;
+            
+            // Box 1: Procurement Officer
+            doc.rect(currentX, signatureY, signatureWidth, signatureHeight);
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'bold');
+            doc.text('Procurement Officer', currentX + signatureWidth / 2, signatureY + 5, { align: 'center' });
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            doc.text('Name: .................................', currentX + 5, signatureY + 15);
+            doc.text('Sign: ............... Date: ...........', currentX + 5, signatureY + 25);
+
+            // Box 2: DP Administration
+            currentX += signatureWidth + gap;
+            doc.rect(currentX, signatureY, signatureWidth, signatureHeight);
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'bold');
+            doc.text('DP Administration', currentX + signatureWidth / 2, signatureY + 5, { align: 'center' });
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            doc.text('Name: .................................', currentX + 5, signatureY + 15);
+            doc.text('Sign: ............... Date: ...........', currentX + 5, signatureY + 25);
+
+            // Box 3: Accounting Officer
+            currentX += signatureWidth + gap;
+            doc.rect(currentX, signatureY, signatureWidth, signatureHeight);
+            doc.setFontSize(10);
+            doc.setFont('helvetica', 'bold');
+            doc.text('Accounting Officer (A.I.E Holder)', currentX + signatureWidth / 2, signatureY + 5, { align: 'center', maxWidth: signatureWidth - 4 });
+            doc.setFont('helvetica', 'normal');
+            doc.setFontSize(9);
+            doc.text('Name: .................................', currentX + 5, signatureY + 15);
+            doc.text('Sign: ............... Date: ...........', currentX + 5, signatureY + 25);
+            
+            doc.save(`disposal_form_${record.requestId}.pdf`);
+        } catch (err) {
+            console.error("Disposal PDF Generation failed", err);
+            alert("An error occurred while generating the Disposal Form PDF.");
+        }
+      };
+
+      const exportBudgetToPdf = (department, financialYear, items, grandTotal, quarter = null, institutionalLogo) => {
+        try {
+            const doc = createPdfDoc('landscape', institutionalLogo);
+            const tableStartY = 90;
             let title, head, body, filename;
 
             if (quarter) {
@@ -454,38 +640,88 @@
         );
       };
 
-      const Reports = ({ items }) => {
+      const Reports = ({ items, institutionalLogo }) => {
         const toast = useToast();
+        const [isDeptModalOpen, setDeptModalOpen] = useState(false);
+        const [selectedDept, setSelectedDept] = useState('');
+        
+        const departments = useMemo(() => [...new Set(items.map(i => i.department))].sort(), [items]);
+
+        useEffect(() => {
+            if (departments.length > 0 && !selectedDept) {
+                setSelectedDept(departments[0]);
+            }
+        }, [departments]);
+        
+        const handleDownloadDeptReport = () => {
+            if (!selectedDept) {
+                toast.error("Please select a department.");
+                return;
+            }
+            const reportTitle = `${selectedDept} Inventory Report`;
+            const headers = [['Name', 'Category', 'Type', 'Condition', 'Quantity', 'Unit', 'Date Added']];
+            const data = items
+                .filter(item => item.department === selectedDept)
+                .map(item => [
+                    item.name,
+                    item.category,
+                    item.isAsset ? 'Asset' : 'Consumable',
+                    item.isAsset ? item.condition : 'N/A',
+                    item.quantity,
+                    item.unit,
+                    new Date(item.dateAdded).toLocaleDateString()
+                ]);
+
+            if (data.length === 0) {
+                toast.info(`No inventory data to export for ${selectedDept}.`);
+                return;
+            }
+
+            exportToPdf(reportTitle, headers, data, `${selectedDept.toLowerCase().replace(/\s+/g, '_')}_report.pdf`, institutionalLogo);
+            setDeptModalOpen(false);
+        };
 
         const downloadReport = (type) => {
             let reportTitle, headers, data, filename, emptyMessage;
             
+            const baseHeaders = ['Name', 'Category', 'Department', 'Type', 'Condition', 'Quantity', 'Unit', 'Date Added'];
+            const mapItem = item => [
+              item.name, 
+              item.category, 
+              item.department, 
+              item.isAsset ? 'Asset' : 'Consumable',
+              item.isAsset ? item.condition : 'N/A',
+              item.quantity, 
+              item.unit, 
+              new Date(item.dateAdded).toLocaleDateString()
+            ];
+
             switch(type) {
                 case 'asset':
                     reportTitle = 'Asset Report';
-                    headers = [['Name', 'Category', 'Department', 'Quantity', 'Unit', 'Date Added']];
-                    data = items.filter(item => item.isAsset).map(item => [item.name, item.category, item.department, item.quantity, item.unit, item.dateAdded]);
+                    headers = [baseHeaders.filter(h => h !== 'Type')]; // Type is always asset
+                    data = items.filter(item => item.isAsset).map(item => mapItem(item).filter((_, i) => i !== 3)); // Remove type
                     filename = 'asset_report.pdf';
                     emptyMessage = "No asset data to export.";
                     break;
                 case 'kitchen':
                     reportTitle = 'Kitchen Inventory Report';
-                    headers = [['Name', 'Category', 'Type', 'Quantity', 'Unit', 'Date Added']];
-                    data = items.filter(item => item.department.toLowerCase() === 'kitchen').map(item => [item.name, item.category, item.isAsset ? 'Asset' : 'Consumable', item.quantity, item.unit, item.dateAdded]);
+                    headers = [baseHeaders];
+                    data = items.filter(item => item.department.toLowerCase() === 'kitchen').map(mapItem);
                     filename = 'kitchen_inventory_report.pdf';
                     emptyMessage = "No kitchen data to export.";
                     break;
                 case 'iga':
                     reportTitle = 'IGA Inventory Report';
-                    headers = [['Name', 'Category', 'Department', 'Type', 'Quantity', 'Unit', 'Date Added']];
-                    data = items.filter(item => item.isForIGA).map(item => [item.name, item.category, item.department, item.isAsset ? 'Asset' : 'Consumable', item.quantity, item.unit, item.dateAdded]);
+                    headers = [baseHeaders];
+                    data = items.filter(item => item.isForIGA).map(mapItem);
                     filename = 'iga_inventory_report.pdf';
                     emptyMessage = "No IGA data to export.";
                     break;
                 case 'stock':
                     reportTitle = 'Full Stock Report';
-                    headers = [['Name', 'Category', 'Department', 'Type', 'Quantity', 'Unit', 'Date Added']];
-                    data = items.map(item => [item.name, item.category, item.department, item.isAsset ? 'Asset' : 'Consumable', item.quantity, item.unit, item.dateAdded]);
+                    headers = [baseHeaders];
+                    data = items.map(mapItem);
                     filename = 'full_stock_report.pdf';
                     emptyMessage = "No stock data to export.";
                     break;
@@ -497,39 +733,68 @@
               toast.info(emptyMessage);
               return;
             }
-            exportToPdf(reportTitle, headers, data, filename);
+            exportToPdf(reportTitle, headers, data, filename, institutionalLogo);
         };
 
         return (
-          <div className="bg-surface p-6 rounded-lg shadow-md">
-            <h3 className="text-xl font-semibold text-text-primary mb-4">Download Reports</h3>
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-              <ReportCard 
-                  title="Asset Report"
-                  description="A list of all returnable assets in the inventory."
-                  iconClass="fas fa-shield-halved"
-                  onPdfClick={() => downloadReport('asset')}
-              />
-              <ReportCard 
-                  title="Kitchen Report"
-                  description="All consumable items and assets for the Kitchen."
-                  iconClass="fas fa-utensils"
-                  onPdfClick={() => downloadReport('kitchen')}
-              />
-              <ReportCard 
-                  title="IGA Report"
-                  description="All items and assets for Income Generating Activities."
-                  iconClass="fas fa-chart-line"
-                  onPdfClick={() => downloadReport('iga')}
-              />
-              <ReportCard 
-                  title="Full Stock Report"
-                  description="A complete dump of all items currently in stock."
-                  iconClass="fas fa-boxes-stacked"
-                  onPdfClick={() => downloadReport('stock')}
-              />
+          <>
+            <div className="bg-surface p-6 rounded-lg shadow-md">
+              <h3 className="text-xl font-semibold text-text-primary mb-4">Download Reports</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-2 xl:grid-cols-5 gap-4">
+                <ReportCard 
+                    title="Departmental Report"
+                    description="Generate a detailed inventory report for a specific department."
+                    iconClass="fas fa-building"
+                    onPdfClick={() => setDeptModalOpen(true)}
+                />
+                <ReportCard 
+                    title="Asset Report"
+                    description="A list of all returnable assets in the inventory."
+                    iconClass="fas fa-shield-halved"
+                    onPdfClick={() => downloadReport('asset')}
+                />
+                <ReportCard 
+                    title="Kitchen Report"
+                    description="All items and assets for the Kitchen."
+                    iconClass="fas fa-utensils"
+                    onPdfClick={() => downloadReport('kitchen')}
+                />
+                <ReportCard 
+                    title="IGA Report"
+                    description="All items for Income Generating Activities."
+                    iconClass="fas fa-chart-line"
+                    onPdfClick={() => downloadReport('iga')}
+                />
+                <ReportCard 
+                    title="Full Stock Report"
+                    description="A complete dump of all items currently in stock."
+                    iconClass="fas fa-boxes-stacked"
+                    onPdfClick={() => downloadReport('stock')}
+                />
+              </div>
             </div>
-          </div>
+            <Modal isOpen={isDeptModalOpen} onClose={() => setDeptModalOpen(false)} title="Generate Departmental Report">
+              <div className="space-y-4">
+                <p className="text-sm text-text-secondary">Select a department to generate a PDF report of its current inventory.</p>
+                <div>
+                  <label htmlFor="dept-select" className="block text-text-secondary text-sm font-bold mb-2">Department</label>
+                  <select
+                    id="dept-select"
+                    value={selectedDept}
+                    onChange={(e) => setSelectedDept(e.target.value)}
+                    className="w-full bg-slate-100 text-text-primary p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
+                  >
+                    {departments.map(dept => <option key={dept} value={dept}>{dept}</option>)}
+                  </select>
+                </div>
+                <div className="flex justify-end pt-2">
+                  <button onClick={handleDownloadDeptReport} className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg flex items-center">
+                    <i className="fas fa-file-pdf mr-2"></i> Generate
+                  </button>
+                </div>
+              </div>
+            </Modal>
+          </>
         );
       };
       // --- END: Reports Component ---
@@ -548,7 +813,7 @@
       );
 
       const COLORS = ['#0284c7', '#facc15', '#10b981', '#a855f7', '#f43f5e', '#64748b'];
-      const Dashboard = ({ stats, items, issueRecords, onGenerateAnalysis, analysis, isLoadingAnalysis }) => {
+      const Dashboard = ({ stats, items, issueRecords, onGenerateAnalysis, analysis, isLoadingAnalysis, institutionalLogo }) => {
         const categoryData = React.useMemo(() => {
           const categoryCounts = items.reduce((acc, item) => {
             acc[item.category] = (acc[item.category] || 0) + item.quantity;
@@ -597,7 +862,7 @@
               <div className="bg-surface p-6 rounded-lg shadow-md">
                 <h3 className="text-xl font-semibold text-text-primary mb-4">Stock Levels by Item</h3>
                 <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={items} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
+                  <BarChart data={items.filter(i => i.quantity > 0)} margin={{ top: 5, right: 20, left: -10, bottom: 5 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#e2e8f0" />
                     <XAxis dataKey="name" stroke="#64748b" tick={{ fontSize: 12 }} />
                     <YAxis stroke="#64748b" />
@@ -639,14 +904,23 @@
               </div>
             </div>
 
-            <Reports items={items} />
+            <Reports items={items} institutionalLogo={institutionalLogo} />
 
           </div>
         );
       };
 
       // From components/Inventory.tsx
-      const Inventory = ({ items, recipients, onAddItem, onIssueItem, onAddMultipleItems }) => {
+      const getConditionColor = (condition) => {
+        switch (condition) {
+            case AssetCondition.GOOD: return 'bg-green-100 text-green-800';
+            case AssetCondition.SERVICEABLE: return 'bg-yellow-100 text-yellow-800';
+            case AssetCondition.OBSOLETE: return 'bg-red-100 text-red-800';
+            default: return 'bg-slate-100 text-slate-800';
+        }
+      };
+
+      const Inventory = ({ items, recipients, onAddItem, onIssueItem, onAddMultipleItems, lockedAssetIds, institutionalLogo }) => {
         const [isAddModalOpen, setAddModalOpen] = useState(false);
         const [isIssueModalOpen, setIssueModalOpen] = useState(false);
         const [isUploadModalOpen, setUploadModalOpen] = useState(false);
@@ -657,7 +931,7 @@
         const [issueQuantity, setIssueQuantity] = useState(1);
         const [selectedRecipient, setSelectedRecipient] = useState(null);
         const [recipientSearch, setRecipientSearch] = useState('');
-        const [returnDate, setReturnDate] = useState('');
+        const [returnDateTime, setReturnDateTime] = useState('');
         
         // State for upload modal
         const [uploadFile, setUploadFile] = useState(null);
@@ -665,10 +939,58 @@
         const [fileTextContent, setFileTextContent] = useState('');
         const [isProcessing, setIsProcessing] = useState(false);
         const [extractedItems, setExtractedItems] = useState([]);
+        
+        const [selectedAssetIds, setSelectedAssetIds] = useState(new Set());
 
         const toast = useToast();
 
         const departments = useMemo(() => [...new Set(items.map(i => i.department))].sort(), [items]);
+
+        const assetIds = useMemo(() => items.filter(i => i.isAsset).map(i => i.id), [items]);
+
+        const handleSelectAsset = (itemId) => {
+            setSelectedAssetIds(prev => {
+                const newSet = new Set(prev);
+                if (newSet.has(itemId)) {
+                    newSet.delete(itemId);
+                } else {
+                    newSet.add(itemId);
+                }
+                return newSet;
+            });
+        };
+
+        const handleSelectAllAssets = (e) => {
+            if (e.target.checked) {
+                setSelectedAssetIds(new Set(assetIds));
+            } else {
+                setSelectedAssetIds(new Set());
+            }
+        };
+
+        const handleDownloadSelected = () => {
+            const selectedItems = items.filter(item => selectedAssetIds.has(item.id));
+            
+            if (selectedItems.length === 0) {
+                toast.info("No assets selected to download.");
+                return;
+            }
+    
+            const reportTitle = 'Selected Assets Report';
+            const headers = [['Name', 'Category', 'Department', 'Condition', 'Quantity', 'Unit', 'Date Added']];
+            const data = selectedItems.map(item => [
+                item.name,
+                item.category,
+                item.department,
+                item.condition || 'N/A',
+                item.quantity,
+                item.unit,
+                new Date(item.dateAdded).toLocaleDateString()
+            ]);
+            const filename = 'selected_assets_report.pdf';
+            
+            exportToPdf(reportTitle, headers, data, filename, institutionalLogo);
+        };
 
         useEffect(() => {
           if (departments.length > 0 && !uploadDepartment) {
@@ -711,7 +1033,7 @@
           setIssueQuantity(1);
           setSelectedRecipient(null);
           setRecipientSearch('');
-          setReturnDate('');
+          setReturnDateTime('');
           setIssueModalOpen(true);
         };
 
@@ -723,8 +1045,8 @@
         const handleIssueItemSubmit = (e) => {
           e.preventDefault();
           if (itemToIssue && selectedRecipient && issueQuantity > 0) {
-            if (itemToIssue.isAsset && !returnDate) {
-              toast.error('Please provide an expected return date for this asset.');
+            if (itemToIssue.isAsset && !returnDateTime) {
+              toast.error('Please provide an expected return date and time for this asset.');
               return;
             }
 
@@ -736,7 +1058,7 @@
             };
 
             if (itemToIssue.isAsset) {
-              issueDetails.returnDate = returnDate;
+              issueDetails.returnDateTime = new Date(returnDateTime).toISOString();
             }
 
             const success = onIssueItem(issueDetails);
@@ -801,13 +1123,7 @@
 
             setIsProcessing(true);
             setExtractedItems([]);
-            const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : null;
-            if (!apiKey) {
-                toast.error("API Key not found.");
-                setIsProcessing(false);
-                return;
-            }
-
+            
             const responseSchema = {
                 type: Type.OBJECT,
                 properties: {
@@ -829,13 +1145,12 @@
             };
             
             try {
-                const ai = new GoogleGenAI({ apiKey });
                 const prompt = `You are an inventory assistant. The following text was extracted from a document containing a list of items for the "${uploadDepartment}" department. Your task is to extract each item's name, quantity, category, and unit of measurement. Adhere strictly to the JSON schema.
 
                 **Document Text:**
                 ${fileTextContent}`;
 
-                const response = await ai.models.generateContent({
+                const response = await callGeminiApi({
                     model: 'gemini-2.5-flash',
                     contents: prompt,
                     config: {
@@ -864,7 +1179,7 @@
 
             } catch (err) {
                 console.error("Gemini API Error:", err);
-                toast.error("AI analysis failed. The document might be unreadable or the API key is invalid.");
+                toast.error(`AI analysis failed: ${err.message}`);
             } finally {
                 setIsProcessing(false);
             }
@@ -893,6 +1208,14 @@
             <div className="flex justify-between items-center mb-6">
               <h2 className="text-3xl font-bold text-text-primary">Inventory</h2>
               <div className="flex gap-2">
+                 {selectedAssetIds.size > 0 && (
+                    <button
+                        onClick={handleDownloadSelected}
+                        className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg flex items-center transition-colors"
+                    >
+                        <i className="fas fa-download mr-2"></i> Download Selected ({selectedAssetIds.size})
+                    </button>
+                 )}
                  <button
                     onClick={() => { setUploadModalOpen(true); }}
                     className="bg-teal-500 hover:bg-teal-600 text-white font-bold py-2 px-4 rounded-lg flex items-center transition-colors"
@@ -912,10 +1235,20 @@
               <table className="min-w-full">
                 <thead className="bg-secondary">
                   <tr>
+                    <th className="py-3 px-4 text-left">
+                        <input
+                            type="checkbox"
+                            className="form-checkbox h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary"
+                            onChange={handleSelectAllAssets}
+                            checked={assetIds.length > 0 && selectedAssetIds.size === assetIds.length}
+                            disabled={assetIds.length === 0}
+                        />
+                    </th>
                     <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Item Name</th>
                     <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Category</th>
                     <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Department</th>
                     <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Type</th>
+                    <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Condition</th>
                     <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Quantity</th>
                     <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Unit</th>
                     <th className="py-3 px-6 text-left text-xs font-medium text-text-secondary uppercase tracking-wider">Date Added</th>
@@ -923,38 +1256,71 @@
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-secondary">
-                  {items.map((item) => (
-                    <tr key={item.id} className="hover:bg-slate-100 transition-colors">
-                      <td className="py-4 px-6 whitespace-nowrap text-text-primary">{item.name}</td>
-                      <td className="py-4 px-6 whitespace-nowrap text-text-secondary">{item.category}</td>
-                      <td className="py-4 px-6 whitespace-nowrap text-text-secondary">{item.department}</td>
-                       <td className="py-4 px-6 whitespace-nowrap text-text-secondary">
-                         <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${item.isAsset ? 'bg-cyan-100 text-cyan-800' : 'bg-indigo-100 text-indigo-800'}`}>
-                            {item.isAsset ? 'Asset' : 'Consumable'}
-                         </span>
-                       </td>
-                      <td className="py-4 px-6 whitespace-nowrap">
-                        <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
-                          item.quantity > 10 ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
-                        }`}>
-                          {item.quantity}
-                        </span>
-                      </td>
-                      <td className="py-4 px-6 whitespace-nowrap text-text-secondary">{item.unit}</td>
-                      <td className="py-4 px-6 whitespace-nowrap text-text-secondary">{item.dateAdded}</td>
-                      <td className="py-4 px-6 text-center">
-                        <button 
-                          onClick={() => handleIssueItemClick(item)}
-                          className="bg-accent hover:bg-amber-300 text-gray-900 font-bold py-1 px-3 rounded-lg text-sm transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed"
-                          disabled={item.quantity === 0}
-                        >
-                          Issue
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {items.map((item) => {
+                    const isLocked = lockedAssetIds.has(item.id);
+                    return (
+                      <tr key={item.id} className={`transition-colors ${isLocked ? 'opacity-50 bg-slate-100 cursor-not-allowed' : 'hover:bg-slate-100'}`}>
+                        <td className="py-4 px-4 whitespace-nowrap">
+                            {item.isAsset && (
+                                <input
+                                    type="checkbox"
+                                    className="form-checkbox h-4 w-4 text-primary rounded border-slate-300 focus:ring-primary"
+                                    checked={selectedAssetIds.has(item.id)}
+                                    onChange={() => handleSelectAsset(item.id)}
+                                    disabled={isLocked}
+                                />
+                            )}
+                        </td>
+                        <td className="py-4 px-6 whitespace-nowrap text-text-primary">
+                          {isLocked && <i className="fas fa-gavel text-slate-400 mr-2" title="This asset is pending disposal and cannot be issued."></i>}
+                          {item.name}
+                        </td>
+                        <td className="py-4 px-6 whitespace-nowrap text-text-secondary">{item.category}</td>
+                        <td className="py-4 px-6 whitespace-nowrap text-text-secondary">{item.department}</td>
+                        <td className="py-4 px-6 whitespace-nowrap text-text-secondary">
+                          <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${item.isAsset ? 'bg-cyan-100 text-cyan-800' : 'bg-indigo-100 text-indigo-800'}`}>
+                              {item.isAsset ? 'Asset' : 'Consumable'}
+                          </span>
+                        </td>
+                        <td className="py-4 px-6 whitespace-nowrap text-text-secondary">
+                          {item.isAsset && (
+                              <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${getConditionColor(item.condition)}`}>
+                                  {item.condition}
+                              </span>
+                          )}
+                        </td>
+                        <td className="py-4 px-6 whitespace-nowrap">
+                          <span className={`px-2 inline-flex text-xs leading-5 font-semibold rounded-full ${
+                            item.quantity > 10 ? 'bg-green-100 text-green-800' : 
+                            item.quantity > 0 ? 'bg-yellow-100 text-yellow-800' : 'bg-red-100 text-red-800'
+                          }`}>
+                            {item.quantity}
+                          </span>
+                        </td>
+                        <td className="py-4 px-6 whitespace-nowrap text-text-secondary">{item.unit}</td>
+                        <td className="py-4 px-6 whitespace-nowrap text-text-secondary">{new Date(item.dateAdded).toLocaleDateString()}</td>
+                        <td className="py-4 px-6 text-center">
+                          <button 
+                            onClick={() => handleIssueItemClick(item)}
+                            className="bg-accent hover:bg-amber-300 text-gray-900 font-bold py-1 px-3 rounded-lg text-sm transition-colors disabled:bg-slate-300 disabled:cursor-not-allowed"
+                            disabled={item.quantity === 0 || isLocked}
+                            title={isLocked ? "Asset is pending disposal" : "Issue this item"}
+                          >
+                            Issue
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
+               {items.length === 0 && (
+                    <div className="text-center py-10 text-text-secondary">
+                        <i className="fas fa-box-open text-4xl mb-3"></i>
+                        <p className="font-semibold">Your inventory is empty.</p>
+                        <p className="text-sm">Click "Add New Item" to get started.</p>
+                    </div>
+                )}
             </div>
 
             <Modal isOpen={isAddModalOpen} onClose={() => setAddModalOpen(false)} title="Add New Item">
@@ -974,7 +1340,7 @@
                  <div className="grid grid-cols-2 gap-4 mb-4">
                   <div>
                     <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="quantity">Quantity</label>
-                    <input type="number" id="quantity" value={newItem.quantity} onChange={(e) => setNewItem({ ...newItem, quantity: parseFloat(e.target.value) || 0 })} className="w-full bg-slate-100 text-text-primary p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" required min="0.01" step="0.01" />
+                    <input type="number" id="quantity" value={newItem.quantity} onChange={(e) => setNewItem({ ...newItem, quantity: parseFloat(e.target.value) || 0 })} className="w-full bg-slate-100 text-text-primary p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" required min="1" step="1" />
                   </div>
                   <div>
                     <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="unit">Unit</label>
@@ -1079,20 +1445,20 @@
                   </div>
                   <div className="mb-4">
                       <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="issueQuantity">Quantity to Issue</label>
-                      <input type="number" id="issueQuantity" value={issueQuantity} onChange={(e) => setIssueQuantity(parseFloat(e.target.value))} className="w-full bg-slate-100 text-text-primary p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" required min="0.01" step="0.01" max={itemToIssue.quantity} />
+                      <input type="number" id="issueQuantity" value={issueQuantity} onChange={(e) => setIssueQuantity(parseFloat(e.target.value))} className="w-full bg-slate-100 text-text-primary p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary" required min="1" step="1" max={itemToIssue.quantity} />
                   </div>
 
                    { itemToIssue.isAsset && (
                       <div className="mb-4">
-                          <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="returnDate">Expected Return Date</label>
+                          <label className="block text-text-secondary text-sm font-bold mb-2" htmlFor="returnDateTime">Expected Return Date & Time</label>
                           <input 
-                              type="date" 
-                              id="returnDate" 
-                              value={returnDate} 
-                              onChange={(e) => setReturnDate(e.target.value)} 
+                              type="datetime-local" 
+                              id="returnDateTime" 
+                              value={returnDateTime} 
+                              onChange={(e) => setReturnDateTime(e.target.value)} 
                               className="w-full bg-slate-100 text-text-primary p-2 rounded-lg focus:outline-none focus:ring-2 focus:ring-primary"
                               required
-                              min={new Date().toISOString().split('T')[0]}
+                              min={new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 16)}
                           />
                       </div>
                   )}
@@ -1162,9 +1528,30 @@
           }
       }
 
+      const formatDateTime = (isoString) => {
+        if (!isoString) return 'N/A';
+        try {
+            const date = new Date(isoString);
+            // Handle old data that might just be a date string 'YYYY-MM-DD'
+            if (isoString.length <= 10) {
+                 return new Date(isoString + 'T00:00:00').toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+            }
+            if (isNaN(date.getTime())) return isoString; // Fallback for invalid dates
+            return date.toLocaleString('en-GB', {
+                year: 'numeric',
+                month: 'short',
+                day: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                hour12: false
+            }).replace(',', '');
+        } catch (e) {
+            return isoString; // Fallback
+        }
+      };
+
       const IssueLog = ({ records, onReturnAsset }) => {
-        const today = new Date();
-        today.setHours(23, 59, 59, 999); 
+        const now = new Date();
 
         return (
           <div>
@@ -1183,8 +1570,8 @@
                 </thead>
                 <tbody className="divide-y divide-secondary">
                   {records.map((record) => {
-                    const returnDate = record.returnDate ? new Date(record.returnDate) : null;
-                    const isOverdue = returnDate && returnDate < today && !record.isReturned;
+                    const returnDateTime = record.returnDateTime ? new Date(record.returnDateTime) : null;
+                    const isOverdue = returnDateTime && returnDateTime < now && !record.isReturned;
                     const isReturned = record.isReturned;
                     
                     return (
@@ -1197,20 +1584,20 @@
                               {record.recipientType}
                             </div>
                         </td>
-                        <td className="py-4 px-6 whitespace-nowrap text-text-secondary">{record.dateIssued}</td>
+                        <td className="py-4 px-6 whitespace-nowrap text-text-secondary">{formatDateTime(record.dateIssued)}</td>
                         <td className="py-4 px-6 whitespace-nowrap text-text-secondary">
                           {record.isAsset ? (
                             isReturned ? (
                                 <span className="px-2 py-1 text-xs rounded-full font-semibold bg-green-200 text-green-800">
-                                    <i className="fas fa-check-circle mr-1"></i> Returned on {record.actualReturnDate}
+                                    <i className="fas fa-check-circle mr-1"></i> Returned on {formatDateTime(record.actualReturnDateTime)}
                                 </span>
                             ) : (
                                 <span 
                                     className={`px-2 py-1 text-xs rounded-full font-semibold ${isOverdue ? 'bg-red-200 text-red-800 animate-pulse' : 'bg-slate-200 text-slate-700'}`}
-                                    title={isOverdue ? `Overdue! Expected back on ${record.returnDate}` : `Expected return on ${record.returnDate}`}
+                                    title={isOverdue ? `Overdue! Expected back on ${formatDateTime(record.returnDateTime)}` : `Expected return on ${formatDateTime(record.returnDateTime)}`}
                                 >
                                     {isOverdue && <i className="fas fa-exclamation-triangle mr-1"></i>}
-                                    Due: {record.returnDate}
+                                    Due: {formatDateTime(record.returnDateTime)}
                                 </span>
                             )
                           ) : (
@@ -1232,6 +1619,13 @@
                   })}
                 </tbody>
               </table>
+               {records.length === 0 && (
+                    <div className="text-center py-10 text-text-secondary">
+                        <i className="fas fa-clipboard-list text-4xl mb-3"></i>
+                        <p className="font-semibold">No items have been issued yet.</p>
+                        <p className="text-sm">Go to the Inventory page to issue an item.</p>
+                    </div>
+                )}
             </div>
           </div>
         );
@@ -1332,13 +1726,6 @@
           setIsProcessingAI(true);
           setExtractedRecipients([]);
 
-          const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : null;
-          if (!apiKey) {
-              toast.error("API Key not found.");
-              setIsProcessingAI(false);
-              return;
-          }
-
           const responseSchema = {
             type: Type.OBJECT,
             properties: {
@@ -1358,13 +1745,12 @@
           };
 
           try {
-              const ai = new GoogleGenAI({ apiKey });
               const prompt = `You are an assistant helping to populate a student or staff database from a document. The document lists individuals for the '${importType}' category. Your task is to extract each person's full name and their unique identifier (like an Admission Number or Staff ID). Adhere strictly to the JSON schema.
 
               **Document Text:**
               ${rawFileText}`;
 
-              const response = await ai.models.generateContent({
+              const response = await callGeminiApi({
                   model: 'gemini-2.5-flash',
                   contents: prompt,
                   config: {
@@ -1388,7 +1774,7 @@
 
           } catch (err) {
               console.error("Gemini API Error:", err);
-              toast.error("AI analysis failed. The document might be unreadable or the API key is invalid.");
+              toast.error(`AI analysis failed: ${err.message}`);
           } finally {
               setIsProcessingAI(false);
           }
@@ -1562,19 +1948,330 @@
         );
       };
       
-      const SettingsPage = () => {
-        return (
-            <div>
-                <h2 className="text-3xl font-bold text-text-primary mb-6">Settings</h2>
-                <div className="bg-surface p-6 rounded-lg shadow-md max-w-2xl">
-                    <h3 className="text-xl font-semibold text-text-primary mb-2">Data Management</h3>
-                    <p className="text-text-secondary mb-4 text-sm">Manage your application's stored data.</p>
-                    <div className="border-t border-secondary pt-4 mt-4">
-                        <p className="text-text-secondary text-sm italic">There are no data management options at the moment.</p>
+      const SettingsPage = ({
+          currentUser, users, setUsers,
+          items, issueRecords, recipients, budgetLogs, disposalRecords,
+          setItems, setIssueRecords, setRecipients, setBudgetLogs, setDisposalRecords,
+          institutionalLogo, setInstitutionalLogo
+      }) => {
+          const toast = useToast();
+          const [restoreFile, setRestoreFile] = useState(null);
+
+          const handleDownloadBackup = () => {
+              try {
+                  const backupData = {
+                      version: '2.0.2', // Incremented version for new logo data
+                      timestamp: new Date().toISOString(),
+                      data: {
+                          users,
+                          items,
+                          issueRecords,
+                          recipients,
+                          budgetLogs,
+                          disposalRecords,
+                          institutionalLogo, // Add logo to backup
+                      }
+                  };
+                  const jsonString = JSON.stringify(backupData, null, 2);
+                  const blob = new Blob([jsonString], { type: 'application/json' });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement('a');
+                  a.href = url;
+                  const date = new Date().toISOString().slice(0, 10);
+                  a.download = `inventory_pro_backup_${date}.json`;
+                  document.body.appendChild(a);
+                  a.click();
+                  document.body.removeChild(a);
+                  URL.revokeObjectURL(url);
+                  toast.success("Data backup downloaded successfully.");
+              } catch (error) {
+                  console.error("Backup failed:", error);
+                  toast.error("Failed to create backup file.");
+              }
+          };
+
+          const handleFileChange = (e) => {
+              const file = e.target.files[0];
+              if (file && (file.type === 'application/json' || file.name.endsWith('.json'))) {
+                  setRestoreFile(file);
+              } else {
+                  toast.error("Please select a valid JSON backup file.");
+                  setRestoreFile(null);
+                  e.target.value = null; // Reset file input
+              }
+          };
+
+          const handleRestoreBackup = () => {
+              if (!restoreFile) {
+                  toast.error("Please select a file to restore.");
+                  return;
+              }
+
+              if (!window.confirm("Are you sure you want to restore? This will overwrite all current data in the application, including user accounts and the institutional logo. This action cannot be undone.")) {
+                  return;
+              }
+
+              const reader = new FileReader();
+              reader.onload = (e) => {
+                  try {
+                      const text = e.target.result;
+                      const backupData = JSON.parse(text);
+
+                      // Basic validation
+                      if (backupData.version && backupData.data &&
+                          'items' in backupData.data &&
+                          'issueRecords' in backupData.data &&
+                          'recipients' in backupData.data &&
+                          'budgetLogs' in backupData.data &&
+                          'disposalRecords' in backupData.data) 
+                      {
+                          setUsers(backupData.data.users || []);
+                          setItems(backupData.data.items || []);
+                          setIssueRecords(backupData.data.issueRecords || []);
+                          setRecipients(backupData.data.recipients || []);
+                          setBudgetLogs(backupData.data.budgetLogs || []);
+                          setDisposalRecords(backupData.data.disposalRecords || []);
+                          setInstitutionalLogo(backupData.data.institutionalLogo || null); // Restore logo
+
+                          window.localStorage.removeItem('temp_department_budgets_v2');
+
+                          toast.success("Data restored successfully! The page will now reload.");
+
+                          setTimeout(() => {
+                             window.location.reload();
+                          }, 2000);
+
+                      } else {
+                          throw new Error("Invalid backup file format.");
+                      }
+                  } catch (error) {
+                      console.error("Restore failed:", error);
+                      toast.error(`Failed to restore data: ${error.message}`);
+                  }
+              };
+              reader.readAsText(restoreFile);
+          };
+
+          const handleLogoUpload = (e) => {
+              const file = e.target.files[0];
+              if (!file) return;
+
+              if (file.size > 1024 * 1024) { // 1MB limit
+                  toast.error("Logo size should not exceed 1MB.");
+                  return;
+              }
+
+              const reader = new FileReader();
+              reader.onload = () => {
+                  setInstitutionalLogo(reader.result);
+                  toast.success("Institutional logo updated successfully.");
+              };
+              reader.onerror = () => {
+                  toast.error("Failed to read the logo file.");
+              };
+              reader.readAsDataURL(file);
+              e.target.value = null; // Reset file input to allow re-upload of same file
+          };
+
+          const handleRemoveLogo = () => {
+              if (window.confirm("Are you sure you want to remove the custom logo and revert to the default?")) {
+                  setInstitutionalLogo(null);
+                  toast.info("Institutional logo has been removed.");
+              }
+          };
+          
+          const UserManagement = () => {
+              const [isAddUserModalOpen, setAddUserModalOpen] = useState(false);
+              const [isEditUserModalOpen, setEditUserModalOpen] = useState(false);
+              const [userToEdit, setUserToEdit] = useState(null);
+              const [newUserData, setNewUserData] = useState({ username: '', password: '', role: UserRole.OFFICER });
+              const [newPassword, setNewPassword] = useState('');
+
+              const handleAddUser = (e) => {
+                e.preventDefault();
+                if (!newUserData.username || !newUserData.password) {
+                  toast.error("Username and password are required.");
+                  return;
+                }
+                if (users.some(u => u.username === newUserData.username)) {
+                  toast.error("Username already exists.");
+                  return;
+                }
+                const newUser = { id: `user-${Date.now()}`, ...newUserData };
+                setUsers(prev => [...prev, newUser]);
+                toast.success(`User '${newUser.username}' created successfully.`);
+                setAddUserModalOpen(false);
+                setNewUserData({ username: '', password: '', role: UserRole.OFFICER });
+              };
+              
+              const openEditModal = (user) => {
+                setUserToEdit(user);
+                setNewPassword('');
+                setEditUserModalOpen(true);
+              };
+
+              const handleEditUser = (e) => {
+                e.preventDefault();
+                if (!newPassword) {
+                  toast.error("Please enter a new password.");
+                  return;
+                }
+                setUsers(prev => prev.map(u => u.id === userToEdit.id ? { ...u, password: newPassword } : u));
+                toast.success(`Password for '${userToEdit.username}' has been updated.`);
+                setEditUserModalOpen(false);
+                setUserToEdit(null);
+              };
+
+              const handleDeleteUser = (userId, username) => {
+                if (userId === currentUser.id) {
+                    toast.error("You cannot delete your own account.");
+                    return;
+                }
+                if (window.confirm(`Are you sure you want to delete the user '${username}'? This action cannot be undone.`)) {
+                    setUsers(prev => prev.filter(u => u.id !== userId));
+                    toast.success(`User '${username}' has been deleted.`);
+                }
+              };
+
+              return (
+                <div className="bg-surface p-6 rounded-lg shadow-md mt-8">
+                  <div className="flex justify-between items-center">
+                    <div>
+                        <h3 className="text-xl font-semibold text-text-primary">User Management</h3>
+                        <p className="text-text-secondary text-sm mt-1">Add, edit, or remove user accounts.</p>
                     </div>
+                    <button onClick={() => setAddUserModalOpen(true)} className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg flex items-center">
+                        <i className="fas fa-user-plus mr-2"></i> Add User
+                    </button>
+                  </div>
+                  <div className="mt-4 overflow-x-auto">
+                    <table className="min-w-full">
+                        <thead className="bg-secondary">
+                            <tr>
+                                <th className="py-2 px-4 text-left text-xs font-medium text-text-secondary uppercase">Username</th>
+                                <th className="py-2 px-4 text-left text-xs font-medium text-text-secondary uppercase">Role</th>
+                                <th className="py-2 px-4 text-center text-xs font-medium text-text-secondary uppercase">Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-secondary">
+                            {users.map(user => (
+                                <tr key={user.id}>
+                                    <td className="py-3 px-4 text-text-primary font-medium">{user.username}</td>
+                                    <td className="py-3 px-4 text-text-secondary">
+                                        <span className={`px-2 py-0.5 text-xs font-semibold rounded-full ${user.role === UserRole.ADMIN ? 'bg-indigo-100 text-indigo-800' : 'bg-green-100 text-green-800'}`}>
+                                            {user.role}
+                                        </span>
+                                    </td>
+                                    <td className="py-3 px-4 text-center space-x-2">
+                                        <button onClick={() => openEditModal(user)} className="text-primary hover:underline p-1" title="Change Password"><i className="fas fa-key"></i></button>
+                                        <button onClick={() => handleDeleteUser(user.id, user.username)} className="text-red-500 hover:text-red-700 hover:underline p-1" title="Delete User"><i className="fas fa-trash-alt"></i></button>
+                                    </td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                  </div>
+
+                  {/* Add User Modal */}
+                  <Modal isOpen={isAddUserModalOpen} onClose={() => setAddUserModalOpen(false)} title="Add New User">
+                    <form onSubmit={handleAddUser}>
+                        <div className="mb-4">
+                            <label className="block text-text-secondary text-sm font-bold mb-2">Username</label>
+                            <input type="text" value={newUserData.username} onChange={e => setNewUserData({...newUserData, username: e.target.value})} className="w-full bg-slate-100 p-2 rounded-lg" required />
+                        </div>
+                        <div className="mb-4">
+                            <label className="block text-text-secondary text-sm font-bold mb-2">Password</label>
+                            <input type="password" value={newUserData.password} onChange={e => setNewUserData({...newUserData, password: e.target.value})} className="w-full bg-slate-100 p-2 rounded-lg" required />
+                        </div>
+                        <div className="mb-4">
+                            <label className="block text-text-secondary text-sm font-bold mb-2">Role</label>
+                            <select value={newUserData.role} onChange={e => setNewUserData({...newUserData, role: e.target.value})} className="w-full bg-slate-100 p-2 rounded-lg">
+                                {Object.values(UserRole).map(role => <option key={role} value={role}>{role}</option>)}
+                            </select>
+                        </div>
+                        <div className="flex justify-end mt-6">
+                            <button type="submit" className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg">Create User</button>
+                        </div>
+                    </form>
+                  </Modal>
+
+                   {/* Edit User Modal */}
+                  <Modal isOpen={isEditUserModalOpen} onClose={() => setEditUserModalOpen(false)} title={`Change Password for ${userToEdit?.username}`}>
+                    <form onSubmit={handleEditUser}>
+                        <div className="mb-4">
+                            <label className="block text-text-secondary text-sm font-bold mb-2">New Password</label>
+                            <input type="password" value={newPassword} onChange={e => setNewPassword(e.target.value)} className="w-full bg-slate-100 p-2 rounded-lg" required autoFocus />
+                        </div>
+                        <div className="flex justify-end mt-6">
+                            <button type="submit" className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg">Update Password</button>
+                        </div>
+                    </form>
+                  </Modal>
                 </div>
-            </div>
-        );
+              );
+          };
+
+
+          return (
+              <div>
+                  <h2 className="text-3xl font-bold text-text-primary mb-6">Settings</h2>
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                      <div className="space-y-8">
+                        <div className="bg-surface p-6 rounded-lg shadow-md">
+                            <h3 className="text-xl font-semibold text-text-primary mb-2">Branding & Appearance</h3>
+                            <p className="text-text-secondary mb-4 text-sm">Customize the look of the application by uploading your institution's logo (max 1MB).</p>
+                            <div className="flex items-center gap-6">
+                                <div className="w-24 h-24 bg-slate-100 rounded-md flex items-center justify-center border-2 border-dashed">
+                                    {institutionalLogo ? (
+                                        <img src={institutionalLogo} alt="Logo Preview" className="max-w-full max-h-full object-contain" />
+                                    ) : (
+                                        <i className="fas fa-image text-4xl text-slate-400"></i>
+                                    )}
+                                </div>
+                                <div className="flex-1 space-y-3">
+                                    <input type="file" id="logo-upload" className="hidden" accept="image/png, image/jpeg, image/svg+xml" onChange={handleLogoUpload} />
+                                    <label htmlFor="logo-upload" className="w-full bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg flex items-center justify-center cursor-pointer text-sm">
+                                        <i className="fas fa-upload mr-2"></i> Upload Logo
+                                    </label>
+                                    <button onClick={handleRemoveLogo} disabled={!institutionalLogo} className="w-full bg-slate-200 hover:bg-slate-300 text-text-secondary font-bold py-2 px-4 rounded-lg flex items-center justify-center disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed text-sm">
+                                        <i className="fas fa-trash-alt mr-2"></i> Remove Logo
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                        {currentUser.role === UserRole.ADMIN && (
+                            <UserManagement />
+                        )}
+                      </div>
+                      <div className="bg-surface p-6 rounded-lg shadow-md">
+                          <h3 className="text-xl font-semibold text-text-primary mb-2">Data Management</h3>
+                          <p className="text-text-secondary mb-4 text-sm">Download a full backup of all your data, or restore the application state from a backup file.</p>
+                          
+                          <div className="border-t border-secondary pt-6 mt-6">
+                              <h4 className="text-lg font-semibold text-text-primary mb-3">Backup Data</h4>
+                              <p className="text-text-secondary text-sm mb-4">Download all inventory, logs, users, and recipient data into a single JSON file. Keep this file safe.</p>
+                              <button onClick={handleDownloadBackup} className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg flex items-center">
+                                  <i className="fas fa-download mr-2"></i> Download Full Backup
+                              </button>
+                          </div>
+
+                          <div className="border-t border-secondary pt-6 mt-6">
+                              <h4 className="text-lg font-semibold text-text-primary mb-3">Restore Data</h4>
+                              <div className="p-4 bg-yellow-50 border border-yellow-200 rounded-lg text-sm text-yellow-900 mb-4">
+                                  <p className="font-bold"><i className="fas fa-exclamation-triangle mr-2"></i>Warning</p>
+                                  <p>Restoring will replace all existing data, including users. This action cannot be undone.</p>
+                              </div>
+                              <div className="flex items-center space-x-4">
+                                  <input type="file" onChange={handleFileChange} accept=".json,application/json" className="flex-grow text-text-secondary text-sm file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-slate-200 file:text-slate-700 hover:file:bg-slate-300 cursor-pointer"/>
+                                  <button onClick={handleRestoreBackup} disabled={!restoreFile} className="bg-red-600 hover:bg-red-700 text-white font-bold py-2 px-4 rounded-lg flex items-center disabled:bg-slate-400 disabled:cursor-not-allowed">
+                                      <i className="fas fa-upload mr-2"></i> Restore
+                                  </button>
+                              </div>
+                          </div>
+                      </div>
+                  </div>
+              </div>
+          );
       };
 
       const calculateGrandTotalForItems = (items) => {
@@ -1584,7 +2281,7 @@
         }, 0);
       };
 
-      const BudgetingPage = ({ onSaveBudget, budgetLogs, items: inventoryItems }) => {
+      const BudgetingPage = ({ onSaveBudget, budgetLogs, items: inventoryItems, institutionalLogo }) => {
           const [budgetFile, setBudgetFile] = useState(null);
           const [rawFileText, setRawFileText] = useState('');
           const [isLoading, setIsLoading] = useState(false);
@@ -1680,12 +2377,6 @@
               }
 
               setIsLoading(true);
-              const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : null;
-              if (!apiKey) {
-                  toast.error("API Key not found. Configure it in your Vercel project settings.");
-                  setIsLoading(false);
-                  return;
-              }
               
               const responseSchema = {
                 type: Type.OBJECT,
@@ -1712,13 +2403,12 @@
               };
 
               try {
-                  const ai = new GoogleGenAI({ apiKey });
                   const prompt = `You are a procurement assistant. Extract structured budget information from the following unstructured text from a document named "${budgetFile.name}". Identify the department, item names, their units of issue, total quantities, and unit prices. Adhere strictly to the JSON schema.
 
                   **Document Text:**
                   ${rawFileText}`;
 
-                  const response = await ai.models.generateContent({
+                  const response = await callGeminiApi({
                       model: 'gemini-2.5-flash',
                       contents: prompt,
                       config: {
@@ -1750,7 +2440,7 @@
 
               } catch (err) {
                   console.error("Gemini API Error:", err);
-                  toast.error("AI analysis failed. The document might be unreadable or the API key is invalid.");
+                  toast.error(`AI analysis failed: ${err.message}`);
               } finally {
                   setIsLoading(false);
               }
@@ -1906,7 +2596,7 @@
                                             onClick={() => {
                                                 const currentItems = departmentBudgets[dept] || [];
                                                 const total = calculateGrandTotalForItems(currentItems);
-                                                exportBudgetToPdf(dept, financialYear, currentItems, total, null);
+                                                exportBudgetToPdf(dept, financialYear, currentItems, total, null, institutionalLogo);
                                             }}
                                             className="bg-sky-600 hover:bg-sky-700 text-white font-bold py-2 px-4 rounded-lg flex items-center disabled:bg-sky-300 disabled:cursor-not-allowed"
                                             disabled={!financialYear.trim() || (departmentBudgets[dept] || []).length === 0}
@@ -1920,7 +2610,7 @@
                                                     key={q}
                                                     onClick={() => {
                                                         const currentItems = departmentBudgets[dept] || [];
-                                                        exportBudgetToPdf(dept, financialYear, currentItems, 0, q);
+                                                        exportBudgetToPdf(dept, financialYear, currentItems, 0, q, institutionalLogo);
                                                     }}
                                                     title={`Download ${q.toUpperCase()} PDF`}
                                                     className={`px-3 py-2 bg-slate-50 text-slate-700 hover:bg-slate-200 text-sm font-semibold ${i > 0 ? 'border-l border-slate-300' : ''} disabled:bg-slate-100 disabled:text-slate-400 disabled:cursor-not-allowed`}
@@ -1944,6 +2634,251 @@
           );
       };
 
+      const getDisposalStatusColor = (status) => {
+          switch (status) {
+              case DisposalStatus.PENDING: return 'bg-yellow-100 text-yellow-800';
+              case DisposalStatus.APPROVED: return 'bg-sky-100 text-sky-800';
+              case DisposalStatus.DISPOSED: return 'bg-green-100 text-green-800';
+              case DisposalStatus.CANCELLED: return 'bg-slate-200 text-slate-800';
+              default: return 'bg-slate-100 text-slate-800';
+          }
+      };
+
+      const AssetDisposalPage = ({ disposalRecords, obsoleteItems, onInitiateDisposal, onUpdateStatus, institutionalLogo }) => {
+          const [isInitiateModalOpen, setInitiateModalOpen] = useState(false);
+          const [isUpdateStatusModalOpen, setUpdateStatusModalOpen] = useState(false);
+          const [recordToUpdate, setRecordToUpdate] = useState(null);
+          const [newStatus, setNewStatus] = useState('');
+          const toast = useToast();
+
+          const handleOpenUpdateModal = (record) => {
+              setRecordToUpdate(record);
+              setNewStatus(record.status);
+              setUpdateStatusModalOpen(true);
+          };
+
+          const handleConfirmUpdateStatus = () => {
+              if (recordToUpdate && newStatus) {
+                  onUpdateStatus(recordToUpdate.id, newStatus);
+                  setUpdateStatusModalOpen(false);
+                  setRecordToUpdate(null);
+              }
+          };
+          
+          const InitiateDisposalModal = ({ isOpen, onClose }) => {
+              const [step, setStep] = useState(1);
+              const [selectedAssetIds, setSelectedAssetIds] = useState(new Set());
+              const [reason, setReason] = useState('');
+              const [method, setMethod] = useState(Object.values(DisposalMethod)[0]);
+              const [boardOfSurvey, setBoardOfSurvey] = useState('');
+
+              const selectedAssets = useMemo(() => obsoleteItems.filter(item => selectedAssetIds.has(item.id)), [selectedAssetIds]);
+
+              const resetModal = () => {
+                  setStep(1);
+                  setSelectedAssetIds(new Set());
+                  setReason('');
+                  setMethod(Object.values(DisposalMethod)[0]);
+                  setBoardOfSurvey('');
+              }
+
+              const handleClose = () => {
+                  resetModal();
+                  onClose();
+              };
+
+              const handleToggleAsset = (assetId) => {
+                  setSelectedAssetIds(prev => {
+                      const newSet = new Set(prev);
+                      if (newSet.has(assetId)) {
+                          newSet.delete(assetId);
+                      } else {
+                          newSet.add(assetId);
+                      }
+                      return newSet;
+                  });
+              };
+              
+              const handleSubmit = () => {
+                if (selectedAssets.length === 0 || !reason.trim() || !boardOfSurvey.trim()) {
+                    toast.error("Please fill all required fields.");
+                    return;
+                }
+                const newRecord = {
+                    assets: selectedAssets,
+                    reason,
+                    method,
+                    boardOfSurvey: boardOfSurvey.split(',').map(s => s.trim()).filter(Boolean)
+                };
+                onInitiateDisposal(newRecord);
+                handleClose();
+              };
+
+              return (
+                  <Modal isOpen={isOpen} onClose={handleClose} title="Initiate Asset Disposal" maxWidth="max-w-4xl">
+                      {/* Stepper */}
+                      <ol className="flex items-center w-full text-sm font-medium text-center text-gray-500 mb-6">
+                        {[1,2,3].map(s => {
+                            const isActive = step === s;
+                            const isCompleted = step > s;
+                            return (
+                                <li key={s} className={`flex md:w-full items-center ${s < 3 ? "after:content-[''] after:w-full after:h-1 after:border-b after:border-gray-200 after:border-1 after:hidden sm:after:inline-block after:mx-6 xl:after:mx-10" : ""} ${isCompleted || isActive ? "text-primary after:border-primary" : ""}`}>
+                                    <span className={`flex items-center after:content-['/${s}'] sm:after:hidden after:mx-2 after:text-gray-500`}>
+                                        {isCompleted ? <i className="fas fa-check w-4 h-4 mr-2"></i> : <span className="mr-2">{s}</span>}
+                                        {s === 1 && "Select Assets"} {s === 2 && "Details"} {s === 3 && "Review"}
+                                    </span>
+                                </li>
+                            )
+                        })}
+                      </ol>
+
+                      {step === 1 && (
+                          <div>
+                              <h4 className="font-semibold text-lg text-text-primary mb-2">Step 1: Select Obsolete Assets</h4>
+                              <p className="text-sm text-text-secondary mb-4">Choose one or more obsolete assets to include in this disposal request. Only items marked as 'Damaged (Obsolete)' and not already in another disposal request are shown.</p>
+                              <div className="overflow-x-auto rounded-lg border border-secondary max-h-80">
+                                  <table className="min-w-full text-sm">
+                                      <thead className="bg-secondary/60 sticky top-0">
+                                          <tr>
+                                              <th className="py-2 px-3"><input type="checkbox" disabled /></th>
+                                              <th className="py-2 px-3 text-left">Name</th>
+                                              <th className="py-2 px-3 text-left">Category</th>
+                                              <th className="py-2 px-3 text-left">Department</th>
+                                              <th className="py-2 px-3 text-left">Date Added</th>
+                                          </tr>
+                                      </thead>
+                                      <tbody>
+                                          {obsoleteItems.map(item => (
+                                              <tr key={item.id} className="border-t border-secondary hover:bg-slate-50">
+                                                  <td className="p-2"><input type="checkbox" className="form-checkbox" checked={selectedAssetIds.has(item.id)} onChange={() => handleToggleAsset(item.id)} /></td>
+                                                  <td className="p-2">{item.name}</td>
+                                                  <td className="p-2">{item.category}</td>
+                                                  <td className="p-2">{item.department}</td>
+                                                  <td className="p-2">{new Date(item.dateAdded).toLocaleDateString()}</td>
+                                              </tr>
+                                          ))}
+                                      </tbody>
+                                  </table>
+                                   {obsoleteItems.length === 0 && <p className="p-4 text-center text-text-secondary">No obsolete assets available for disposal.</p>}
+                              </div>
+                              <div className="flex justify-end mt-4">
+                                  <button onClick={() => setStep(2)} disabled={selectedAssetIds.size === 0} className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg disabled:bg-slate-300">Next <i className="fas fa-arrow-right ml-2"></i></button>
+                              </div>
+                          </div>
+                      )}
+                      
+                      {step === 2 && (
+                        <div>
+                             <h4 className="font-semibold text-lg text-text-primary mb-2">Step 2: Provide Disposal Details</h4>
+                             <div className="space-y-4">
+                                <div>
+                                    <label className="block text-text-secondary text-sm font-bold mb-2">Reason for Disposal</label>
+                                    <textarea value={reason} onChange={e => setReason(e.target.value)} className="w-full bg-slate-100 p-2 rounded-lg" rows="3" required></textarea>
+                                </div>
+                                <div>
+                                    <label className="block text-text-secondary text-sm font-bold mb-2">Recommended Disposal Method</label>
+                                    <select value={method} onChange={e => setMethod(e.target.value)} className="w-full bg-slate-100 p-2 rounded-lg">
+                                        {Object.values(DisposalMethod).map(m => <option key={m} value={m}>{m}</option>)}
+                                    </select>
+                                </div>
+                                <div>
+                                    <label className="block text-text-secondary text-sm font-bold mb-2">Board of Survey Members (comma-separated)</label>
+                                    <input type="text" value={boardOfSurvey} onChange={e => setBoardOfSurvey(e.target.value)} className="w-full bg-slate-100 p-2 rounded-lg" required />
+                                </div>
+                             </div>
+                             <div className="flex justify-between mt-4">
+                                 <button onClick={() => setStep(1)} className="text-text-secondary font-bold py-2 px-4 rounded-lg"><i className="fas fa-arrow-left mr-2"></i> Back</button>
+                                 <button onClick={() => setStep(3)} disabled={!reason.trim() || !boardOfSurvey.trim()} className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg disabled:bg-slate-300">Next <i className="fas fa-arrow-right ml-2"></i></button>
+                             </div>
+                        </div>
+                      )}
+                      
+                      {step === 3 && (
+                        <div>
+                             <h4 className="font-semibold text-lg text-text-primary mb-2">Step 3: Review and Submit</h4>
+                             <div className="space-y-4 text-sm p-4 border rounded-lg bg-slate-50">
+                                <p><strong>Assets to Dispose ({selectedAssets.length}):</strong> {selectedAssets.map(a => a.name).join(', ')}</p>
+                                <p><strong>Reason:</strong> {reason}</p>
+                                <p><strong>Method:</strong> {method}</p>
+                                <p><strong>Board of Survey:</strong> {boardOfSurvey}</p>
+                             </div>
+                             <div className="flex justify-between mt-4">
+                                 <button onClick={() => setStep(2)} className="text-text-secondary font-bold py-2 px-4 rounded-lg"><i className="fas fa-arrow-left mr-2"></i> Back</button>
+                                 <button onClick={handleSubmit} className="bg-green-600 hover:bg-green-700 text-white font-bold py-2 px-4 rounded-lg">Submit Disposal Request</button>
+                             </div>
+                        </div>
+                      )}
+                  </Modal>
+              )
+          };
+
+          return (
+              <div>
+                  <div className="flex justify-between items-center mb-6">
+                      <h2 className="text-3xl font-bold text-text-primary">Asset Disposal</h2>
+                      <button onClick={() => setInitiateModalOpen(true)} className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg flex items-center">
+                          <i className="fas fa-plus mr-2"></i> Initiate New Disposal
+                      </button>
+                  </div>
+
+                  <div className="bg-surface rounded-lg shadow-md overflow-x-auto">
+                      <table className="min-w-full">
+                          <thead className="bg-secondary">
+                              <tr>
+                                  <th className="py-3 px-6 text-left">Request ID</th>
+                                  <th className="py-3 px-6 text-left">Date</th>
+                                  <th className="py-3 px-6 text-left">Items</th>
+                                  <th className="py-3 px-6 text-left">Status</th>
+                                  <th className="py-3 px-6 text-center">Actions</th>
+                              </tr>
+                          </thead>
+                          <tbody className="divide-y divide-secondary">
+                              {disposalRecords.map(record => (
+                                  <tr key={record.id} className="hover:bg-slate-50">
+                                      <td className="py-4 px-6 font-mono text-primary">{record.requestId}</td>
+                                      <td className="py-4 px-6">{new Date(record.requestDate).toLocaleDateString()}</td>
+                                      <td className="py-4 px-6">{record.assets.length}</td>
+                                      <td className="py-4 px-6">
+                                        <span className={`px-2 py-1 text-xs font-semibold rounded-full ${getDisposalStatusColor(record.status)}`}>
+                                          {record.status}
+                                        </span>
+                                      </td>
+                                      <td className="py-4 px-6 text-center space-x-2">
+                                          <button onClick={() => exportDisposalFormToPdf(record, institutionalLogo)} className="text-primary hover:underline text-sm p-1" title="Download PDF Form"><i className="fas fa-file-pdf"></i></button>
+                                          <button onClick={() => handleOpenUpdateModal(record)} className="text-primary hover:underline text-sm p-1" title="Update Status"><i className="fas fa-edit"></i></button>
+                                      </td>
+                                  </tr>
+                              ))}
+                          </tbody>
+                      </table>
+                      {disposalRecords.length === 0 && (
+                          <div className="text-center py-10 text-text-secondary">
+                              <i className="fas fa-gavel text-4xl mb-3"></i>
+                              <p className="font-semibold">No disposal records found.</p>
+                              <p className="text-sm">Click "Initiate New Disposal" to start.</p>
+                          </div>
+                      )}
+                  </div>
+                  
+                  <InitiateDisposalModal isOpen={isInitiateModalOpen} onClose={() => setInitiateModalOpen(false)} />
+                  
+                  <Modal isOpen={isUpdateStatusModalOpen} onClose={() => setUpdateStatusModalOpen(false)} title={`Update Status for ${recordToUpdate?.requestId}`}>
+                      {recordToUpdate && (
+                          <div>
+                              <p className="text-sm text-text-secondary mb-4">Select the new status for this disposal request.</p>
+                              <select value={newStatus} onChange={e => setNewStatus(e.target.value)} className="w-full bg-slate-100 p-2 rounded-lg">
+                                  {Object.values(DisposalStatus).map(s => <option key={s} value={s}>{s}</option>)}
+                              </select>
+                              <div className="flex justify-end mt-4">
+                                <button onClick={handleConfirmUpdateStatus} className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg">Confirm Update</button>
+                              </div>
+                          </div>
+                      )}
+                  </Modal>
+              </div>
+          );
+      };
+
 
       // From components/Sidebar.tsx
       const NavLink = ({ page, iconClass, currentPage, setCurrentPage, children }) => {
@@ -1957,17 +2892,20 @@
             }`}
             onClick={() => setCurrentPage(page)}
           >
-            <i className={`${iconClass} w-6 h-6 mr-3`}></i>
+            <i className={`${iconClass} w-6 h-6 mr-3 text-center`}></i>
             <span className="font-medium">{children}</span>
           </li>
         );
       };
 
-      const Sidebar = ({ currentPage, setCurrentPage, onLogout }) => {
+      const Sidebar = ({ currentPage, setCurrentPage, onLogout, institutionalLogo }) => {
         return (
           <aside className="w-64 bg-surface p-4 flex flex-col justify-between shadow-lg">
             <div>
               <div className="text-center mb-10 p-2">
+                  {institutionalLogo && (
+                      <img src={institutionalLogo} alt="Institution Logo" className="w-20 h-20 mx-auto mb-4 object-contain" />
+                  )}
                   <h1 className="text-base font-bold text-text-primary leading-tight">ELDAMA RAVINE TECHNICAL AND VOCATIONAL COLLEGE</h1>
                   <p className="text-xs text-text-secondary mt-2 uppercase tracking-wider">Technology for Sustainable Development</p>
                   <h2 className="text-lg font-semibold text-primary mt-2">Procurement Portal</h2>
@@ -1988,6 +2926,9 @@
                   </NavLink>
                    <NavLink page={Page.BUDGETING} iconClass="fas fa-dollar-sign" currentPage={currentPage} setCurrentPage={setCurrentPage}>
                     Budgeting
+                  </NavLink>
+                   <NavLink page={Page.ASSET_DISPOSAL} iconClass="fas fa-gavel" currentPage={currentPage} setCurrentPage={setCurrentPage}>
+                    Asset Disposal
                   </NavLink>
                    <NavLink page={Page.SETTINGS} iconClass="fas fa-cog" currentPage={currentPage} setCurrentPage={setCurrentPage}>
                     Settings
@@ -2023,7 +2964,7 @@
         };
         
         const handleForgot = () => {
-          alert("Hint: The username is 'admin' and the password is 'password' for this demonstration.");
+          alert("Hint: Two accounts are available for demonstration.\n\nAdmin: admin / procadminertvc\nOfficer: ertvc / procertvc");
         }
 
         return (
@@ -2033,7 +2974,7 @@
                 <h1 className="text-xl font-bold text-text-primary leading-tight">ELDAMA RAVINE TECHNICAL AND VOCATIONAL COLLEGE</h1>
                 <p className="text-xs text-text-secondary mt-2 uppercase tracking-wider">Technology for Sustainable Development</p>
                 <h2 className="text-2xl font-semibold text-primary mt-2">Procurement Inventory Portal</h2>
-                <p className="text-text-secondary mt-1">Procurement Officer Login</p>
+                <p className="text-text-secondary mt-1">Please Sign In</p>
               </div>
               <form className="mt-8 space-y-6" onSubmit={handleLoginAttempt}>
                 {error && <p className="text-center text-sm font-medium text-red-600 bg-red-100 p-3 rounded-lg">{error}</p>}
@@ -2093,7 +3034,11 @@
 
       // Main App Component (from App.tsx)
       const App = () => {
-        const [isAuthenticated, setIsAuthenticated] = useLocalStorage('inventory_auth', false);
+        const [currentUser, setCurrentUser] = useLocalStorage('inventory_current_user_v1', null);
+        const [users, setUsers] = useLocalStorage('inventory_users_v1', [
+            { id: 'user-ertvc', username: 'ertvc', password: 'procertvc', role: UserRole.OFFICER },
+            { id: 'user-admin', username: 'admin', password: 'procadminertvc', role: UserRole.ADMIN },
+        ]);
         const [loginError, setLoginError] = useState('');
         const [currentPage, setCurrentPage] = useState(Page.DASHBOARD);
         const toast = useToast();
@@ -2101,32 +3046,41 @@
         const [analysis, setAnalysis] = useState('');
         const [isLoadingAnalysis, setIsLoadingAnalysis] = useState(false);
         
+        // --- ASSET RETURN MODAL STATE ---
+        const [isReturnModalOpen, setReturnModalOpen] = useState(false);
+        const [recordToReturn, setRecordToReturn] = useState(null);
+
         // --- OFFLINE/SYNC STATE ---
         const [isOnline, setIsOnline] = useState(navigator.onLine);
         const [isSyncing, setIsSyncing] = useState(false);
         const [syncQueue, setSyncQueue] = useLocalStorage('inventory_sync_queue_v2', []);
         
         // --- DATA STATE ---
-        const [items, setItems] = useLocalStorage('inventory_items_v2', [
-          { id: '1', name: 'Laptop Pro', quantity: 25, category: 'Electronics', dateAdded: '2023-10-01', unit: 'pcs', isAsset: true, department: 'ICT Department', isForIGA: false },
-          { id: '2', name: 'Wireless Mouse', quantity: 50, category: 'Accessories', dateAdded: '2023-10-05', unit: 'pcs', isAsset: true, department: 'ICT Department', isForIGA: false },
-          { id: '3', name: 'Projector', quantity: 10, category: 'Electronics', dateAdded: '2023-09-15', unit: 'pcs', isAsset: true, department: 'Training Department', isForIGA: false },
-          { id: '4', name: 'Whiteboard Markers (Pack)', quantity: 100, category: 'Stationery', dateAdded: '2023-10-10', unit: 'pcs', isAsset: false, department: 'Procurement', isForIGA: false },
-          { id: '5', name: 'Office Chair', quantity: 5, category: 'Furniture', dateAdded: '2023-08-20', unit: 'pcs', isAsset: true, department: 'Administration', isForIGA: false },
-          { id: '6', name: 'Notebooks (Pack of 10)', quantity: 200, category: 'Stationery', dateAdded: '2023-10-12', unit: 'pcs', isAsset: false, department: 'Procurement', isForIGA: false },
-          { id: '7', name: 'Cooking Oil', quantity: 30, category: 'Consumables', dateAdded: '2023-10-20', unit: 'kgs', isAsset: false, department: 'Kitchen', isForIGA: false },
-          { id: '8', name: 'Rice', quantity: 150, category: 'Consumables', dateAdded: '2023-10-20', unit: 'kgs', isAsset: false, department: 'Kitchen', isForIGA: false },
-          { id: '9', name: 'Chef Knife Set', quantity: 3, category: 'Equipment', dateAdded: '2023-09-01', unit: 'pcs', isAsset: true, department: 'Kitchen', isForIGA: false },
-          { id: '10', name: 'Three phase 4 way distribution', quantity: 5, category: 'Electrical', dateAdded: '2024-01-01', unit: 'pcs', isAsset: false, department: 'Electrical Engineering', isForIGA: false },
-          { id: '11', name: 'Maize Seeds', quantity: 50, category: 'Farming Inputs', dateAdded: '2024-02-01', unit: 'kgs', isAsset: false, department: 'Agriculture', isForIGA: true },
+        // The institutional logo is persisted in localStorage, ensuring it's saved and reused across sessions.
+        const [institutionalLogo, setInstitutionalLogo] = useLocalStorage('inventory_institution_logo_v1', null);
+
+        const [items, setItems] = useLocalStorage('inventory_items_v4', [
+          { id: '1', name: 'Laptop Pro', quantity: 25, category: 'Electronics', dateAdded: '2023-10-01', unit: 'pcs', isAsset: true, department: 'ICT Department', isForIGA: false, condition: AssetCondition.GOOD },
+          { id: '2', name: 'Wireless Mouse', quantity: 50, category: 'Accessories', dateAdded: '2023-10-05', unit: 'pcs', isAsset: true, department: 'ICT Department', isForIGA: false, condition: AssetCondition.GOOD },
+          { id: '3', name: 'Projector', quantity: 10, category: 'Electronics', dateAdded: '2023-09-15', unit: 'pcs', isAsset: true, department: 'Training Department', isForIGA: false, condition: AssetCondition.GOOD },
+          { id: '4', name: 'Whiteboard Markers (Pack)', quantity: 100, category: 'Stationery', dateAdded: '2023-10-10', unit: 'pcs', isAsset: false, department: 'Procurement', isForIGA: false, condition: null },
+          { id: '5', name: 'Office Chair', quantity: 1, category: 'Furniture', dateAdded: '2020-08-20', unit: 'pcs', isAsset: true, department: 'Administration', isForIGA: false, condition: AssetCondition.OBSOLETE },
+          { id: '6', name: 'Notebooks (Pack of 10)', quantity: 200, category: 'Stationery', dateAdded: '2023-10-12', unit: 'pcs', isAsset: false, department: 'Procurement', isForIGA: false, condition: null },
+          { id: '7', name: 'Cooking Oil', quantity: 30, category: 'Consumables', dateAdded: '2023-10-20', unit: 'kgs', isAsset: false, department: 'Kitchen', isForIGA: false, condition: null },
+          { id: '8', name: 'Rice', quantity: 150, category: 'Consumables', dateAdded: '2023-10-20', unit: 'kgs', isAsset: false, department: 'Kitchen', isForIGA: false, condition: null },
+          { id: '9', name: 'Chef Knife Set', quantity: 3, category: 'Equipment', dateAdded: '2023-09-01', unit: 'pcs', isAsset: true, department: 'Kitchen', isForIGA: false, condition: AssetCondition.GOOD },
+          { id: '10', name: 'Three phase 4 way distribution', quantity: 5, category: 'Electrical', dateAdded: '2024-01-01', unit: 'pcs', isAsset: false, department: 'Electrical Engineering', isForIGA: false, condition: null },
+          { id: '11', name: 'Maize Seeds', quantity: 50, category: 'Farming Inputs', dateAdded: '2024-02-01', unit: 'kgs', isAsset: false, department: 'Agriculture', isForIGA: true, condition: null },
+          { id: '12', name: 'Old CRT Monitor', quantity: 1, category: 'Electronics', dateAdded: '2015-05-10', unit: 'pcs', isAsset: true, department: 'ICT Department', isForIGA: false, condition: AssetCondition.OBSOLETE },
         ]);
 
-        const [issueRecords, setIssueRecords] = useLocalStorage('inventory_issue_records_v2', [
-          { id: 'rec1', itemId: '1', itemName: 'Laptop Pro', quantityIssued: 1, recipientName: 'John Doe (TRN001)', recipientType: 'Trainer', dateIssued: '2023-10-15', unit: 'pcs', returnDate: '2023-11-15', isAsset: true, isReturned: false },
-          { id: 'rec2', itemId: '4', itemName: 'Whiteboard Markers (Pack)', quantityIssued: 5, recipientName: 'Jane Smith (ADM015)', recipientType: 'Trainee', dateIssued: '2023-10-16', unit: 'pcs', isAsset: false, isReturned: false },
-          { id: 'rec3', itemId: '2', itemName: 'Wireless Mouse', quantityIssued: 1, recipientName: 'Peter Jones (NTS005)', recipientType: 'Non-teaching Staff', dateIssued: '2023-10-17', unit: 'pcs', returnDate: '2023-11-01', isAsset: true, isReturned: true, actualReturnDate: '2023-10-30' },
-          { id: 'rec4', itemId: '3', itemName: 'Projector', quantityIssued: 1, recipientName: 'Alice Johnson (ADM1001)', recipientType: 'Trainee', dateIssued: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], unit: 'pcs', returnDate: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], isAsset: true, isReturned: false },
-          { id: 'rec5', itemId: '11', itemName: 'Maize Seeds', quantityIssued: 10, recipientName: 'College Farm (IGA001)', recipientType: 'Income Generating Activities', dateIssued: '2024-02-05', unit: 'kgs', isAsset: false, isReturned: false },
+        const [issueRecords, setIssueRecords] = useLocalStorage('inventory_issue_records_v3', [
+          { id: 'rec1', itemId: '1', itemName: 'Laptop Pro', quantityIssued: 1, recipientName: 'John Doe (TRN001)', recipientType: 'Trainer', dateIssued: '2023-10-15T09:00:00.000Z', unit: 'pcs', returnDateTime: '2023-11-15T17:00:00.000Z', isAsset: true, isReturned: false },
+          { id: 'rec2', itemId: '4', itemName: 'Whiteboard Markers (Pack)', quantityIssued: 5, recipientName: 'Jane Smith (ADM015)', recipientType: 'Trainee', dateIssued: '2023-10-16T10:30:00.000Z', unit: 'pcs', isAsset: false, isReturned: false },
+          { id: 'rec3', itemId: '2', itemName: 'Wireless Mouse', quantityIssued: 1, recipientName: 'Peter Jones (NTS005)', recipientType: 'Non-teaching Staff', dateIssued: '2023-10-17T11:00:00.000Z', unit: 'pcs', returnDateTime: '2023-11-01T17:00:00.000Z', isAsset: true, isReturned: true, actualReturnDateTime: '2023-10-30T14:00:00.000Z' },
+          { id: 'rec4', itemId: '3', itemName: 'Projector', quantityIssued: 1, recipientName: 'Alice Johnson (ADM1001)', recipientType: 'Trainee', dateIssued: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString(), unit: 'pcs', returnDateTime: new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString(), isAsset: true, isReturned: false },
+          { id: 'rec5', itemId: '11', itemName: 'Maize Seeds', quantityIssued: 10, recipientName: 'College Farm (IGA001)', recipientType: 'Income Generating Activities', dateIssued: '2024-02-05T09:00:00.000Z', unit: 'kgs', isAsset: false, isReturned: false },
+          { id: 'rec6', itemId: '1', itemName: 'Laptop Pro', quantityIssued: 1, recipientName: 'Short Term Loan', recipientType: 'Trainer', dateIssued: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(), unit: 'pcs', returnDateTime: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), isAsset: true, isReturned: false },
         ]);
 
         const [recipients, setRecipients] = useLocalStorage('inventory_recipients_v2', [
@@ -2138,6 +3092,10 @@
         ]);
         
         const [budgetLogs, setBudgetLogs] = useLocalStorage('inventory_budget_logs_v2', []);
+
+        const [disposalRecords, setDisposalRecords] = useLocalStorage('inventory_disposal_records_v1', [
+           { id: 'disp1', requestId: 'DR-2024-001', assetIds: ['12'], assets: [items.find(i=>i.id==='12')], reason: 'Technologically obsolete and non-functional.', method: DisposalMethod.DESTRUCTION, boardOfSurvey: ['Mr. C. Mwangi', 'Mrs. A. Otieno'], status: DisposalStatus.PENDING, requestDate: '2024-07-20T10:00:00.000Z' }
+        ]);
 
         // --- OFFLINE & SYNC LOGIC ---
         const syncOfflineChanges = useCallback(async () => {
@@ -2152,8 +3110,6 @@
           for (const action of queueToProcess) {
             try {
               // --- API SIMULATION ---
-              // In a real app, this would be an actual fetch() call to your backend API.
-              // For example: await fetch('/api/sync', { method: 'POST', body: JSON.stringify(action) });
               console.log('Simulating API call for action:', action.type, action.payload);
               await new Promise(resolve => setTimeout(resolve, 300)); // Fake network delay
               // --- END SIMULATION ---
@@ -2206,12 +3162,23 @@
         
         // --- DERIVED STATE ---
         const dashboardStats = useMemo(() => {
-          const totalItems = items.reduce((sum, item) => sum + item.quantity, 0);
-          const lowStockItems = items.filter(item => item.quantity <= 10).length;
+          const totalItems = items.reduce((sum, item) => sum + (item.quantity || 0), 0);
+          const lowStockItems = items.filter(item => !item.isAsset && item.quantity <= 10).length;
           const totalIssued = issueRecords.reduce((sum, record) => sum + record.quantityIssued, 0);
           const categories = [...new Set(items.map(item => item.category))].length;
           return { totalItems, lowStockItems, totalIssued, categories };
         }, [items, issueRecords]);
+        
+        const lockedAssetIds = useMemo(() => new Set(
+            disposalRecords
+                .filter(r => r.status !== DisposalStatus.DISPOSED && r.status !== DisposalStatus.CANCELLED)
+                .flatMap(r => r.assetIds)
+        ), [disposalRecords]);
+
+        const obsoleteItemsForDisposal = useMemo(() => 
+            items.filter(i => i.isAsset && i.condition === AssetCondition.OBSOLETE && !lockedAssetIds.has(i.id)), 
+        [items, lockedAssetIds]);
+
 
         const addActionToQueue = (type, payload) => {
           setSyncQueue(prev => [...prev, { id: Date.now(), type, payload }]);
@@ -2222,7 +3189,8 @@
           const newItem = {
             ...item,
             id: new Date().toISOString(),
-            dateAdded: new Date().toISOString().split('T')[0],
+            dateAdded: new Date().toISOString(),
+            condition: item.isAsset ? AssetCondition.GOOD : null,
           };
           setItems(prev => [newItem, ...prev]);
           addActionToQueue('ADD_ITEM', newItem);
@@ -2232,7 +3200,8 @@
           const newItems = itemsToAdd.map(item => ({
             ...item,
             id: `new-${Date.now()}-${Math.random()}`,
-            dateAdded: new Date().toISOString().split('T')[0],
+            dateAdded: new Date().toISOString(),
+            condition: item.isAsset ? AssetCondition.GOOD : null,
           }));
 
           setItems(prev => [...newItems, ...prev]);
@@ -2266,7 +3235,7 @@
               id: new Date().toISOString(),
               itemName: itemToUpdate.name,
               unit: itemToUpdate.unit,
-              dateIssued: new Date().toISOString().split('T')[0],
+              dateIssued: new Date().toISOString(),
               isAsset: itemToUpdate.isAsset,
               isReturned: false,
             };
@@ -2287,21 +3256,84 @@
           return false;
         };
         
-        const handleReturnAsset = (recordId) => {
+        const handleOpenReturnModal = (recordId) => {
+          const record = issueRecords.find(r => r.id === recordId);
+          if (record) {
+            setRecordToReturn(record);
+            setReturnModalOpen(true);
+          }
+        };
+
+        const handleConfirmReturnAsset = (recordId, newCondition) => {
             const recordToReturn = issueRecords.find(rec => rec.id === recordId);
             if (!recordToReturn) return;
 
-            const updatedRecord = { ...recordToReturn, isReturned: true, actualReturnDate: new Date().toISOString().split('T')[0] };
-
+            const updatedRecord = { ...recordToReturn, isReturned: true, actualReturnDateTime: new Date().toISOString() };
             setIssueRecords(prev => prev.map(rec => rec.id === recordId ? updatedRecord : rec));
-            setItems(prev => prev.map(item => 
-                item.id === recordToReturn.itemId
-                    ? { ...item, quantity: item.quantity + recordToReturn.quantityIssued }
-                    : item
-            ));
             
-            addActionToQueue('RETURN_ASSET', { recordId: recordId, returnDate: updatedRecord.actualReturnDate });
-            toast.success(`'${recordToReturn.itemName}' has been returned to stock.`);
+            const isObsolete = newCondition === AssetCondition.OBSOLETE;
+            const quantityToAdd = isObsolete ? 0 : recordToReturn.quantityIssued;
+            
+            setItems(prevItems => prevItems.map(item => {
+                if (item.id === recordToReturn.itemId) {
+                    return {
+                        ...item,
+                        quantity: item.quantity + quantityToAdd,
+                        condition: newCondition
+                    };
+                }
+                return item;
+            }));
+            
+            addActionToQueue('RETURN_ASSET', { 
+                recordId, 
+                returnDateTime: updatedRecord.actualReturnDateTime,
+                newCondition: newCondition
+            });
+            
+            toast.success(`'${recordToReturn.itemName}' has been processed.`);
+            setReturnModalOpen(false);
+            setRecordToReturn(null);
+        };
+
+        const handleInitiateDisposal = (disposalData) => {
+            const lastIdNum = disposalRecords.reduce((max, r) => {
+                const num = parseInt(r.requestId.split('-')[2] || 0);
+                return Math.max(max, num);
+            }, 0);
+            const newId = `DR-${new Date().getFullYear()}-${(lastIdNum + 1).toString().padStart(3, '0')}`;
+            
+            const newRecord = {
+                id: `disp-${Date.now()}`,
+                requestId: newId,
+                assetIds: disposalData.assets.map(a => a.id),
+                assets: disposalData.assets.map(({id, name, category, department, dateAdded}) => ({id, name, category, department, dateAdded})),
+                reason: disposalData.reason,
+                method: disposalData.method,
+                boardOfSurvey: disposalData.boardOfSurvey,
+                status: DisposalStatus.PENDING,
+                requestDate: new Date().toISOString()
+            };
+
+            setDisposalRecords(prev => [newRecord, ...prev]);
+            addActionToQueue('INITIATE_DISPOSAL', newRecord);
+            toast.success(`Disposal request ${newId} created successfully.`);
+        };
+        
+        const handleUpdateDisposalStatus = (recordId, newStatus) => {
+            const record = disposalRecords.find(r => r.id === recordId);
+            if (!record) return;
+
+            setDisposalRecords(prev => prev.map(r => r.id === recordId ? {...r, status: newStatus} : r));
+
+            if (newStatus === DisposalStatus.DISPOSED) {
+                const assetIdsToRemove = new Set(record.assetIds);
+                setItems(prev => prev.filter(item => !assetIdsToRemove.has(item.id)));
+                toast.success(`${assetIdsToRemove.size} asset(s) were permanently removed from inventory.`);
+            } else {
+                 toast.success(`Disposal request ${record.requestId} status updated to ${newStatus}.`);
+            }
+             addActionToQueue('UPDATE_DISPOSAL_STATUS', { recordId, newStatus });
         };
 
 
@@ -2328,8 +3360,13 @@
         };
 
         const handleLogin = (user, pass) => {
-          if (user === 'admin' && pass === 'password') {
-            setIsAuthenticated(true);
+          const foundUser = users.find(u => u.username.toLowerCase() === user.toLowerCase() && u.password === pass);
+          if (foundUser) {
+            setCurrentUser({
+                id: foundUser.id,
+                username: foundUser.username,
+                role: foundUser.role,
+            });
             setLoginError('');
             toast.success("Welcome! You are now logged in.");
           } else {
@@ -2338,7 +3375,7 @@
         };
 
         const handleLogout = () => {
-          setIsAuthenticated(false);
+          setCurrentUser(null);
           // Don't clear local storage on logout, so data persists.
           toast.info("You have been logged out.");
         };
@@ -2351,27 +3388,18 @@
           setIsLoadingAnalysis(true);
           setAnalysis('');
           
-          const apiKey = typeof process !== 'undefined' ? process.env.API_KEY : null;
-
-          if (!apiKey) {
-            toast.error("API Key not found. Please configure it in your Vercel project settings.");
-            setIsLoadingAnalysis(false);
-            return;
-          }
-          
           try {
-            const ai = new GoogleGenAI({ apiKey });
             const prompt = `
               Analyze the following inventory data for a technical college. Provide a brief, insightful summary (3-4 bullet points) for a procurement officer. Focus on action items.
 
               **Current Stock:**
-              ${JSON.stringify(items.map(i => ({ name: i.name, quantity: i.quantity, category: i.category })), null, 2)}
+              ${JSON.stringify(items.map(i => ({ name: i.name, quantity: i.quantity, category: i.category, condition: i.condition })), null, 2)}
 
               **Recent Issue Log:**
               ${JSON.stringify(issueRecords.slice(0, 10).map(i => ({ item: i.itemName, qty: i.quantityIssued, to: i.recipientType})), null, 2)}
             `;
 
-            const response = await ai.models.generateContent({
+            const response = await callGeminiApi({
               model: 'gemini-2.5-flash',
               contents: prompt,
             });
@@ -2379,44 +3407,110 @@
             setAnalysis(response.text.replace(/\\n/g, '\n'));
           } catch (err) {
             console.error("Gemini API Error:", err);
-            toast.error("Failed to get AI analysis. Please check the API key and try again.");
+            toast.error(`Failed to get AI analysis: ${err.message}`);
             setAnalysis('Error: Could not retrieve analysis.');
           } finally {
             setIsLoadingAnalysis(false);
           }
         }, [items, issueRecords, toast, isOnline]);
 
-
         const renderPage = () => {
           switch (currentPage) {
             case Page.DASHBOARD:
-              return <Dashboard stats={dashboardStats} items={items} issueRecords={issueRecords} onGenerateAnalysis={handleGenerateAnalysis} analysis={analysis} isLoadingAnalysis={isLoadingAnalysis} />;
+              return <Dashboard stats={dashboardStats} items={items} issueRecords={issueRecords} onGenerateAnalysis={handleGenerateAnalysis} analysis={analysis} isLoadingAnalysis={isLoadingAnalysis} institutionalLogo={institutionalLogo} />;
             case Page.INVENTORY:
-              return <Inventory items={items} recipients={recipients} onAddItem={handleAddItem} onIssueItem={handleIssueItem} onAddMultipleItems={handleAddMultipleItems} />;
+              return <Inventory items={items} recipients={recipients} onAddItem={handleAddItem} onIssueItem={handleIssueItem} onAddMultipleItems={handleAddMultipleItems} lockedAssetIds={lockedAssetIds} institutionalLogo={institutionalLogo} />;
             case Page.ISSUE_LOG:
-              return <IssueLog records={issueRecords} onReturnAsset={handleReturnAsset} />;
+              return <IssueLog records={issueRecords} onReturnAsset={handleOpenReturnModal} />;
             case Page.RECIPIENTS:
               return <RecipientsPage recipients={recipients} onAddRecipient={handleAddRecipient} onImportRecipients={handleImportRecipients} />;
             case Page.SETTINGS:
-                return <SettingsPage />;
+                return <SettingsPage 
+                            currentUser={currentUser}
+                            users={users}
+                            setUsers={setUsers}
+                            items={items}
+                            issueRecords={issueRecords}
+                            recipients={recipients}
+                            budgetLogs={budgetLogs}
+                            disposalRecords={disposalRecords}
+                            setItems={setItems}
+                            setIssueRecords={setIssueRecords}
+                            setRecipients={setRecipients}
+                            setBudgetLogs={setBudgetLogs}
+                            setDisposalRecords={setDisposalRecords}
+                            institutionalLogo={institutionalLogo}
+                            setInstitutionalLogo={setInstitutionalLogo}
+                        />;
             case Page.BUDGETING:
-                return <BudgetingPage onSaveBudget={handleSaveBudget} budgetLogs={budgetLogs} items={items} />;
+                return <BudgetingPage onSaveBudget={handleSaveBudget} budgetLogs={budgetLogs} items={items} institutionalLogo={institutionalLogo} />;
+            case Page.ASSET_DISPOSAL:
+                return <AssetDisposalPage disposalRecords={disposalRecords} obsoleteItems={obsoleteItemsForDisposal} onInitiateDisposal={handleInitiateDisposal} onUpdateStatus={handleUpdateDisposalStatus} institutionalLogo={institutionalLogo} />;
             default:
-              return <Dashboard stats={dashboardStats} items={items} issueRecords={issueRecords} onGenerateAnalysis={handleGenerateAnalysis} analysis={analysis} isLoadingAnalysis={isLoadingAnalysis} />;
+              return <Dashboard stats={dashboardStats} items={items} issueRecords={issueRecords} onGenerateAnalysis={handleGenerateAnalysis} analysis={analysis} isLoadingAnalysis={isLoadingAnalysis} institutionalLogo={institutionalLogo} />;
           }
         };
 
-        if (!isAuthenticated) {
+        if (!currentUser) {
           return <LoginPage onLogin={handleLogin} error={loginError} />;
         }
 
+        const ReturnAssetModal = () => {
+            const [condition, setCondition] = useState(AssetCondition.GOOD);
+
+            useEffect(() => {
+                if (recordToReturn?.itemId) {
+                    const item = items.find(i => i.id === recordToReturn.itemId);
+                    setCondition(item?.condition || AssetCondition.GOOD);
+                }
+            }, [recordToReturn]);
+
+            if (!isReturnModalOpen || !recordToReturn) return null;
+
+            const handleSubmit = (e) => {
+                e.preventDefault();
+                handleConfirmReturnAsset(recordToReturn.id, condition);
+            };
+
+            return (
+                <Modal isOpen={isReturnModalOpen} onClose={() => setReturnModalOpen(false)} title={`Return: ${recordToReturn.itemName}`}>
+                    <form onSubmit={handleSubmit}>
+                        <div className="mb-4">
+                            <p className="text-sm text-text-secondary">Select the condition of the returned asset. Obsolete items will be written off and not returned to stock.</p>
+                        </div>
+                        <fieldset className="space-y-3">
+                            <legend className="text-text-secondary text-sm font-bold mb-2">Asset Condition</legend>
+                            {Object.values(AssetCondition).map(cond => (
+                                <label key={cond} className="flex items-center p-3 border rounded-lg hover:bg-slate-50 cursor-pointer transition-colors">
+                                    <input
+                                        type="radio"
+                                        name="condition"
+                                        value={cond}
+                                        checked={condition === cond}
+                                        onChange={() => setCondition(cond)}
+                                        className="h-4 w-4 text-primary focus:ring-primary border-slate-300"
+                                    />
+                                    <span className="ml-3 text-sm font-medium text-text-primary">{cond}</span>
+                                </label>
+                            ))}
+                        </fieldset>
+                        <div className="flex justify-end mt-6">
+                            <button type="button" onClick={() => setReturnModalOpen(false)} className="text-text-secondary font-bold py-2 px-4 rounded-lg mr-2">Cancel</button>
+                            <button type="submit" className="bg-primary hover:bg-sky-500 text-white font-bold py-2 px-4 rounded-lg">Confirm Return</button>
+                        </div>
+                    </form>
+                </Modal>
+            );
+        };
+
         return (
           <div className="flex h-screen bg-gradient-to-br from-background to-secondary text-text-primary">
-            <Sidebar currentPage={currentPage} setCurrentPage={setCurrentPage} onLogout={handleLogout} />
+            <Sidebar currentPage={currentPage} setCurrentPage={setCurrentPage} onLogout={handleLogout} institutionalLogo={institutionalLogo} />
             <main className="flex-1 p-6 lg:p-10 overflow-auto">
               {renderPage()}
             </main>
             <OnlineStatusIndicator isOnline={isOnline} isSyncing={isSyncing} syncQueueLength={syncQueue.length} />
+            <ReturnAssetModal />
           </div>
         );
       };
